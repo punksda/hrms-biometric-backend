@@ -110,7 +110,7 @@ function computeAttendance(hotelId, month) {
     });
 
     const punchesByDate = {};
-    attendanceLogs.filter(l => String(l.employee_code) === String(emp.machine_user_id)).forEach(l => {
+    attendanceLogs.filter(l => String(l.employee_code) === String(emp.machine_user_id) || String(l.employee_code) === String(emp.id)).forEach(l => {
       const d = ymd(l.log_datetime || l.received_at);
       if (!d) return;
       punchesByDate[d] = (punchesByDate[d] || 0) + 1;
@@ -369,6 +369,136 @@ app.post("/api/employees/import", (req, res) => {
   }
   res.json({ status: "success", created, updated, skipped, total_employees: employees.length });
 });
+
+// Bulk backfill for historical punches (e.g. exported from Realtime
+// Biometrics' "Data Download" feature), separate from the live webhook
+// above which only catches punches from the moment it was configured
+// onward. Body: { rows: [{ employee_code, log_datetime, log_time,
+// downloaded_at, device_sn }] } — same shape as a single live punch,
+// just many at once. Duplicate-safe: skips a row if an identical
+// employee_code + log_datetime + device_sn punch is already stored.
+app.post("/api/biometric/attendance/import", (req, res) => {
+  const rows = (req.body && req.body.rows) || [];
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ status: "error", message: "rows must be a non-empty array." });
+  }
+  let imported = 0, skipped = 0, duplicates = 0;
+  for (const row of rows) {
+    const employee_code = row.employee_code && String(row.employee_code).trim();
+    const log_datetime = row.log_datetime && String(row.log_datetime).trim();
+    if (!employee_code || !log_datetime) { skipped++; continue; }
+    const device_sn = row.device_sn ? String(row.device_sn).trim() : "";
+    const alreadyExists = attendanceLogs.some(l =>
+      String(l.employee_code) === employee_code &&
+      String(l.log_datetime) === log_datetime &&
+      String(l.device_sn || "") === device_sn
+    );
+    if (alreadyExists) { duplicates++; continue; }
+    attendanceLogs.push({
+      employee_code,
+      log_datetime,
+      log_time: row.log_time || "",
+      downloaded_at: row.downloaded_at || "",
+      device_sn,
+      received_at: new Date().toISOString(),
+      source: "historical_import"
+    });
+    imported++;
+  }
+  res.json({ status: "success", imported, duplicates, skipped, total_logs: attendanceLogs.length });
+});
+
+function findHotelByName(name) {
+  if (!name) return null;
+  const target = String(name).trim().toLowerCase();
+  return hotels.find(h => h.name.trim().toLowerCase() === target) || null;
+}
+
+// Import Realtime Biometrics' "Download Attendance" daily export — the
+// format is one row per employee for a single day, with resolved
+// Employee Code, Employee Name, Branch, Dept_Name, Desig_Name, In Time,
+// Out-Time, Status. There's no date column in that export (it covers
+// whatever single day you downloaded), so the date has to be supplied
+// alongside the rows.
+//
+// Unlike the raw device webhook, this format's Employee Code is already
+// the resolved HRMS-style code, not a machine card number — so employees
+// are matched/created by that code directly. If the code is a bare
+// number (e.g. "00000950"), that's an unmapped card Realtime hasn't
+// linked to a named employee yet; it still gets imported so you can see
+// it, but you'll want to fix the mapping on Realtime's side too.
+//
+// Body: { date: "YYYY-MM-DD", rows: [{ employee_code, employee_name,
+// branch, dept_name, desig_name, in_time, out_time, status }] }
+app.post("/api/attendance/daily-summary/import", (req, res) => {
+  const date = ymd(req.body && req.body.date);
+  const rows = (req.body && req.body.rows) || [];
+  if (!date) return res.status(400).json({ status: "error", message: "A valid date (YYYY-MM-DD) is required." });
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ status: "error", message: "rows must be a non-empty array." });
+  }
+
+  let employeesCreated = 0, employeesUpdated = 0, punchesImported = 0, duplicates = 0, unmatchedHotel = 0, skipped = 0;
+
+  for (const row of rows) {
+    const employee_code = row.employee_code && String(row.employee_code).trim();
+    if (!employee_code) { skipped++; continue; }
+
+    const hotel = findHotelByName(row.branch);
+    if (row.branch && !hotel) unmatchedHotel++;
+
+    let emp = employees.find(e => String(e.id) === employee_code);
+    if (emp) {
+      if (row.employee_name) emp.name = String(row.employee_name).trim();
+      if (hotel) emp.hotel_id = hotel.id;
+      if (row.desig_name || row.dept_name) emp.role = String(row.desig_name || row.dept_name).trim();
+      employeesUpdated++;
+    } else {
+      emp = {
+        id: employee_code,
+        name: row.employee_name ? String(row.employee_name).trim() : employee_code,
+        hotel_id: hotel ? hotel.id : "",
+        role: row.desig_name ? String(row.desig_name).trim() : (row.dept_name ? String(row.dept_name).trim() : ""),
+        status: "Active",
+        machine_user_id: ""
+      };
+      employees.push(emp);
+      employeesCreated++;
+    }
+
+    // Synthesize a punch from each of In Time / Out Time so this flows
+    // through the same computeAttendance() logic as live webhook punches.
+    for (const timeValue of [row.in_time, row.out_time]) {
+      const t = timeValue && String(timeValue).trim();
+      if (!t || t === "00:00") continue; // blank/placeholder time, no real punch
+      const log_datetime = `${date} ${t}:00`;
+      const exists = attendanceLogs.some(l => String(l.employee_code) === employee_code && String(l.log_datetime) === log_datetime);
+      if (exists) { duplicates++; continue; }
+      attendanceLogs.push({
+        employee_code,
+        log_datetime,
+        log_time: t,
+        downloaded_at: "",
+        device_sn: "",
+        received_at: new Date().toISOString(),
+        source: "daily_summary_import"
+      });
+      punchesImported++;
+    }
+  }
+
+  res.json({
+    status: "success",
+    date,
+    employees_created: employeesCreated,
+    employees_updated: employeesUpdated,
+    punches_imported: punchesImported,
+    duplicates,
+    unmatched_hotel_rows: unmatchedHotel,
+    skipped
+  });
+});
+
 
 app.get("/api/employees", (req, res) => {
   res.json({ status: "success", records: employees });
