@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voyage HRMS · HR & Payroll Workspace</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+Pro:wght@600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#172033;--muted:#667085;--line:#e6eaf0;--canvas:#f6f8fc;--indigo:#4f46e5}
+  *{box-sizing:border-box} body{margin:0;font-family:"DM Sans",sans-serif;color:var(--ink);background:var(--canvas)}
+  .side-nav{width:258px;background:#171b36}
+  .nav-item{transition:.15s}.nav-item:hover,.nav-item.active{background:rgba(255,255,255,.12);color:#fff}
+  .panel{border:1px solid var(--line);box-shadow:0 8px 24px rgba(23,32,51,.05)}
+  .tab-view{display:none}.tab-view.active{display:block;animation:rise .2s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .section-title{font-family:"Source Serif Pro",serif;letter-spacing:-.02em}
+  .status-pill{font-size:.72rem;font-weight:700;border-radius:999px;padding:.28rem .62rem;white-space:nowrap;display:inline-block}
+  .toast{transform:translateY(120px);opacity:0;transition:.25s}.toast.show{transform:none;opacity:1}
+  .table-scroll{overflow:auto}
+  input:focus,select:focus,button:focus{outline:none;border-color:var(--indigo);box-shadow:0 0 0 3px rgba(79,70,229,.15)}
+  @media(max-width:900px){.side-nav{display:none}.main-area{width:100%}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.577.0/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+</head>
+<body>
+<div class="flex">
+  <aside class="side-nav fixed inset-y-0 left-0 z-30 hidden md:flex flex-col p-4 text-slate-300">
+    <div class="px-3 pt-3 pb-7 flex items-center gap-3">
+      <div class="grid h-10 w-10 place-items-center rounded-xl bg-indigo-500 text-white"><i data-lucide="compass" class="h-5 w-5"></i></div>
+      <div><div class="text-lg font-bold text-white">Voyage HRMS</div><div class="text-xs text-indigo-200">People operations, clearly.</div></div>
+    </div>
+    <nav class="space-y-1">
+      <button class="nav-item active flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="overview"><i data-lucide="layout-dashboard" class="h-4 w-4"></i>Overview</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="hotel-network"><i data-lucide="building-2" class="h-4 w-4"></i>Hotel Network</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="employees"><i data-lucide="users" class="h-4 w-4"></i>Employees</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="attendance"><i data-lucide="calendar-days" class="h-4 w-4"></i>Attendance Register</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="biometric"><i data-lucide="fingerprint" class="h-4 w-4"></i>Biometric Devices</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="compoff"><i data-lucide="badge-plus" class="h-4 w-4"></i>Comp Off</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="payroll"><i data-lucide="wallet-cards" class="h-4 w-4"></i>Payroll</button>
+    </nav>
+    <div class="mt-auto rounded-xl border border-white/10 bg-white/5 p-3 text-xs">
+      <span id="side-dot" class="mr-2 inline-block h-2 w-2 rounded-full bg-amber-400"></span><span id="side-status">Checking backend connection</span>
+    </div>
+  </aside>
+  <div class="main-area w-full md:ml-[258px]">
+    <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:px-7">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-[.16em] text-indigo-600">Hospitality operations</p>
+          <h1 class="text-xl font-bold text-slate-900 md:text-2xl">HR &amp; Payroll Workspace</h1>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <span id="connection-badge" class="status-pill bg-amber-50 text-amber-700">Checking backend</span>
+          <select id="hotel-filter" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold"><option value="all">All Hotels</option></select>
+          <select id="month-select" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"></select>
+        </div>
+      </div>
+    </header>
+    <main class="w-full p-4 md:p-7">
+
+      <section id="overview" class="tab-view active">
+        <p class="text-sm font-semibold text-indigo-600">Backend-connected operations</p>
+        <h2 class="section-title text-3xl font-bold">A clear view of every property.</h2>
+        <div class="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5" id="kpi-grid"></div>
+        <section class="panel mt-6 rounded-2xl bg-white p-6">
+          <h3 class="font-bold">Secure sync status</h3>
+          <p id="overview-status" class="mt-2 text-sm text-slate-600">Loading…</p>
+          <button id="overview-refresh" class="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Refresh backend data</button>
+        </section>
+      </section>
+
+      <section id="hotel-network" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Multi-property management</p>
+        <h2 class="section-title text-3xl font-bold">Hotel Network</h2>
+        <section class="panel mt-6 rounded-2xl bg-white p-5">
+          <div class="flex flex-wrap justify-between gap-3">
+            <div><h3 class="font-bold">Properties</h3><p class="text-sm text-slate-500">Attendance and biometric device status per hotel.</p></div>
+            <div class="flex gap-2">
+              <button id="add-hotel" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Add Hotel</button>
+              <button id="reload-hotels" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
+            </div>
+          </div>
+          <form id="add-hotel-form" class="mt-4 hidden rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <div class="grid gap-3 md:grid-cols-3">
+              <div><label class="mb-1 block text-sm font-semibold">Hotel Name</label><input id="new-hotel-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Hotel Code</label><input id="new-hotel-code" placeholder="e.g. GLZ" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Device Serial(s) <span class="font-normal text-slate-500">(comma-separated, optional)</span></label><input id="new-hotel-device" class="w-full rounded-lg border p-2.5 text-sm"></div>
+            </div>
+            <p id="add-hotel-error" class="mt-3 hidden text-sm text-red-700"></p>
+            <div class="mt-4 flex gap-2"><button id="submit-add-hotel" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Save hotel</button><button id="cancel-add-hotel" type="button" class="rounded-lg border bg-white px-4 py-2.5 text-sm font-bold">Cancel</button></div>
+          </form>
+          <div class="table-scroll mt-4"><table class="w-full min-w-[900px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Hotel</th><th class="p-3">Device Serial</th><th class="p-3">Attendance</th><th class="p-3">Biometric</th><th class="p-3">Last Sync</th><th class="p-3">Actions</th></tr></thead>
+            <tbody id="hotel-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+      <section id="employees" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">People directory</p>
+        <h2 class="section-title text-3xl font-bold">Employees</h2>
+        <section class="panel mt-6 rounded-2xl bg-white p-6">
+          <div class="flex flex-wrap justify-end gap-2">
+            <input id="employees-file" type="file" accept=".csv" class="hidden">
+            <button id="import-employees" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Import Employees</button>
+            <button id="refresh-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
+          </div>
+          <div id="employee-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No employee records loaded.</div>
+          <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[700px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee ID</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Role</th><th class="p-3">Status</th></tr></thead>
+            <tbody id="employee-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+      <section id="attendance" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Time &amp; presence</p>
+        <h2 class="section-title text-3xl font-bold">Attendance Register</h2>
+        <section class="panel mt-6 rounded-2xl bg-white p-5 md:p-6">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div><h3 class="font-bold">Daily attendance matrix</h3><p class="text-xs text-slate-500">Click a cell to edit that day's status.</p></div>
+            <button id="download-attendance" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+          </div>
+          <div id="attendance-empty" class="mt-5 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500"></div>
+          <div id="attendance-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[760px] text-left text-sm">
+            <thead id="attendance-table-head" class="bg-slate-50 text-xs uppercase text-slate-500"></thead>
+            <tbody id="attendance-table"></tbody>
+          </table></div>
+          <div class="mt-5 border-t pt-4">
+            <details><summary class="cursor-pointer text-sm font-bold text-slate-700">Data tools</summary>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <input id="duty-roster-file" type="file" accept=".csv" class="hidden">
+                <input id="daily-attendance-file" type="file" accept=".csv" class="hidden">
+                <input id="daily-attendance-date" type="date" class="hidden">
+                <button id="upload-roster" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Upload Duty Roster</button>
+                <button id="import-daily-attendance" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Import Daily Attendance</button>
+              </div>
+            </details>
+          </div>
+        </section>
+      </section>
+
+      <section id="biometric" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Devices</p>
+        <h2 class="section-title text-3xl font-bold">Biometric Devices</h2>
+        <section class="panel mt-6 rounded-2xl bg-white p-5">
+          <p class="text-sm text-slate-500">Live status per property. Actual export configuration lives in Realtime Biometrics itself.</p>
+          <div class="table-scroll mt-4"><table class="w-full min-w-[700px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Hotel</th><th class="p-3">Device Serial</th><th class="p-3">Status</th><th class="p-3">Last Sync</th><th class="p-3">Actions</th></tr></thead>
+            <tbody id="biometric-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+      <section id="compoff" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Earned time-off</p>
+        <h2 class="section-title text-3xl font-bold">Comp Off</h2>
+        <p class="mt-1 text-sm text-slate-500">Shows comp-off activity within the selected month only, not a running total-to-date.</p>
+        <section class="panel mt-6 rounded-2xl bg-white p-5">
+          <div class="flex justify-end"><button id="download-compoff" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button></div>
+          <div id="compoff-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No comp-off records loaded.</div>
+          <div id="compoff-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[600px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Earned this month</th><th class="p-3">Used this month</th><th class="p-3">Net change</th></tr></thead>
+            <tbody id="compoff-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+      <section id="payroll" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Compensation</p>
+        <h2 class="section-title text-3xl font-bold">Payroll</h2>
+        <section class="panel mt-6 rounded-2xl bg-white p-5">
+          <div class="flex justify-end"><button id="download-payroll" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button></div>
+          <div id="payroll-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No payroll records loaded.</div>
+          <div id="payroll-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[980px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Monthly Salary</th><th class="p-3">Present</th><th class="p-3">Absent</th><th class="p-3">Weekly Off</th><th class="p-3">Comp Off</th><th class="p-3">Payable Days</th><th class="p-3">Per-Day Rate</th><th class="p-3">Gross Pay</th></tr></thead>
+            <tbody id="payroll-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+    </main>
+  </div>
+</div>
+<div id="toast" class="toast fixed bottom-5 right-5 z-[70] max-w-sm rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" role="status"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const API_BASE_URL=""; // same origin — frontend and backend are one service now
+const state={hotels:[],employees:[],attendance:[],payroll:[],compoff:[],selectedHotel:"all",backend:false,
+  counts:{employees:null,attendance:null,payroll:null}};
+
+function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),3600)}
+function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
+function setBackend(ok){state.backend=ok;$("connection-badge").textContent=ok?"Backend connected":"Backend unavailable";$("connection-badge").className=`status-pill ${ok?"bg-emerald-50 text-emerald-700":"bg-red-50 text-red-700"}`;$("side-status").textContent=ok?"Secure backend connected":"Backend connection required";$("side-dot").className=`mr-2 inline-block h-2 w-2 rounded-full ${ok?"bg-emerald-400":"bg-red-400"}`}
+async function request(path,options={}){
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);
+  try{
+    const response=await fetch(`${API_BASE_URL}${path}`,{method:options.method||"GET",headers:{"Content-Type":"application/json",...(options.headers||{})},body:options.body?JSON.stringify(options.body):undefined,signal:controller.signal});
+    const data=(response.headers.get("content-type")||"").includes("application/json")?await response.json():{};
+    if(!response.ok){const e=new Error(data.message||`Backend returned ${response.status}`);e.status=response.status;throw e}
+    return data;
+  } finally{clearTimeout(timeout)}
+}
+function errorCopy(e,action){if(e.name==="AbortError")return `${action} timed out.`;return `${action} failed: ${e.message||"check the connection and retry."}`}
+function statusPill(v){const s=String(v||"Not configured");const tone=/connected/i.test(s)?"bg-emerald-50 text-emerald-700":/error|unavailable/i.test(s)?"bg-red-50 text-red-700":"bg-slate-100 text-slate-700";return `<span class="status-pill ${tone}">${esc(s)}</span>`}
+function hotelName(id){const h=state.hotels.find(h=>String(h.id)===String(id));return h?h.name:(id||"—")}
+function escapeCsv(v){const t=String(v??"");return /[",\n\r]/.test(t)?`"${t.replace(/"/g,'""')}"`:t}
+function downloadCsv(rows,filename){if(!rows||!rows.length){toast("No records to export.");return}const headers=[...new Set(rows.flatMap(r=>Object.keys(r)))];const csv=[headers.join(","),...rows.map(r=>headers.map(h=>escapeCsv(r[h])).join(","))].join("\n");const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),0)}
+function loadPapa(){if(window.Papa)return Promise.resolve(window.Papa);if(window.__papaPromise)return window.__papaPromise;window.__papaPromise=new Promise((res,rej)=>{const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js";s.onload=()=>res(window.Papa);s.onerror=()=>rej(new Error("CSV parser failed to load."));document.head.appendChild(s)});return window.__papaPromise}
+function parseCsv(file){return loadPapa().then(Papa=>new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:true,complete:resolve,error:reject})))}
+
+function populateMonths(){
+  const sel=$("month-select"),now=new Date(),opts=[];
+  for(let i=0;i<12;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);const value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;const label=d.toLocaleString("en-US",{month:"long",year:"numeric"});opts.push(`<option value="${value}">${label}</option>`)}
+  sel.innerHTML=opts.join("");
+}
+function selectedMonth(){return $("month-select").value}
+
+function renderKpis(){
+  const scoped=state.selectedHotel==="all"?state.hotels:state.hotels.filter(h=>String(h.id)===state.selectedHotel);
+  const values=[scoped.length,state.counts.employees,state.counts.attendance,state.hotels.length?state.hotels.filter(h=>h.biometric_status==="Connected").length:0,state.counts.payroll];
+  document.querySelectorAll("#kpi-grid article p.mt-2").forEach((el,i)=>el.textContent=values[i]===null?"…":values[i]??0);
+}
+
+async function loadHotels(){
+  try{
+    const data=await request("/api/hotels/status");
+    state.hotels=data.records||[];
+    state.counts.employees=data.employees_count??null;
+    state.counts.attendance=data.attendance_records??null;
+    state.counts.payroll=data.payroll_records??null;
+    setBackend(true);
+    const opts=state.hotels.map(h=>`<option value="${esc(h.id)}">${esc(h.code||h.id)} · ${esc(h.name)}</option>`).join("");
+    $("hotel-filter").innerHTML=`<option value="all">All Hotels</option>${opts}`;
+    $("hotel-filter").value=state.selectedHotel;
+    renderHotelTable();renderBiometricTable();renderKpis();
+  }catch(e){setBackend(false);$("hotel-table").innerHTML=`<tr><td colspan="6" class="p-8 text-center text-red-700">Backend unavailable.</td></tr>`}
+}
+function renderHotelTable(){
+  const rows=state.selectedHotel==="all"?state.hotels:state.hotels.filter(h=>String(h.id)===state.selectedHotel);
+  $("hotel-table").innerHTML=rows.length?rows.map(h=>`<tr class="border-t"><td class="p-3 font-bold">${esc(h.name)}<span class="block text-xs text-slate-500">${esc(h.code||"")}</span></td><td class="p-3">${esc(h.device_id||"—")}</td><td class="p-3">${statusPill(h.attendance_status)}</td><td class="p-3">${statusPill(h.biometric_status)}</td><td class="p-3">${esc(h.last_sync||"No records")}</td><td class="p-3"><button class="hotel-test rounded border px-2 py-1 text-xs font-bold" data-id="${esc(h.id)}">Test biometric</button></td></tr>`).join(""):`<tr><td colspan="6" class="p-8 text-center text-slate-500">No hotels yet.</td></tr>`;
+  document.querySelectorAll(".hotel-test").forEach(b=>b.onclick=()=>hotelBiometricTest(b.dataset.id));
+}
+function renderBiometricTable(){
+  const rows=state.selectedHotel==="all"?state.hotels:state.hotels.filter(h=>String(h.id)===state.selectedHotel);
+  $("biometric-table").innerHTML=rows.length?rows.map(h=>`<tr class="border-t"><td class="p-3 font-bold">${esc(h.name)}</td><td class="p-3">${esc(h.device_id||"—")}</td><td class="p-3">${statusPill(h.biometric_status)}</td><td class="p-3">${esc(h.last_sync||"No records")}</td><td class="p-3"><button class="bio-test rounded border px-2 py-1 text-xs font-bold" data-id="${esc(h.id)}">Test</button></td></tr>`).join(""):`<tr><td colspan="5" class="p-8 text-center text-slate-500">No hotels yet.</td></tr>`;
+  document.querySelectorAll(".bio-test").forEach(b=>b.onclick=()=>hotelBiometricTest(b.dataset.id));
+}
+async function hotelBiometricTest(id){try{await request(`/api/hotels/${encodeURIComponent(id)}/biometric/test`,{method:"POST"});toast("Backend confirmed biometric test.");await loadHotels()}catch(e){toast(errorCopy(e,"Test biometric"))}}
+
+function toggleAddHotelForm(open){const f=$("add-hotel-form");f.classList.toggle("hidden",!open);if(!open){f.reset();$("add-hotel-error").classList.add("hidden")}}
+async function addHotel(ev){
+  ev.preventDefault();
+  const name=$("new-hotel-name").value.trim(),code=$("new-hotel-code").value.trim(),device_id=$("new-hotel-device").value.trim(),err=$("add-hotel-error"),btn=$("submit-add-hotel");
+  if(!name||!code){err.textContent="Name and code are required.";err.classList.remove("hidden");return}
+  err.classList.add("hidden");btn.disabled=true;btn.textContent="Saving…";
+  try{await request("/api/hotels",{method:"POST",body:{name,code,device_id}});toast(`Hotel ${name} added.`);toggleAddHotelForm(false);await loadHotels()}
+  catch(e){err.textContent=e.message||errorCopy(e,"Add hotel");err.classList.remove("hidden")}
+  finally{btn.disabled=false;btn.textContent="Save hotel"}
+}
+
+function renderEmployees(){
+  const rows=state.selectedHotel==="all"?state.employees:state.employees.filter(e=>String(e.hotel_id)===state.selectedHotel);
+  const empty=$("employee-empty"),wrap=$("employee-table-wrap");
+  if(!rows.length){empty.textContent="No employee records loaded.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
+  empty.classList.add("hidden");wrap.classList.remove("hidden");
+  $("employee-table").innerHTML=rows.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role||"—")}</td><td class="p-3">${esc(r.status||"—")}</td></tr>`).join("");
+}
+async function loadEmployees(){try{const data=await request("/api/employees");state.employees=data.records||[];renderEmployees()}catch(e){toast(errorCopy(e,"Load employees"))}}
+async function importEmployees(file){
+  try{
+    const parsed=await parseCsv(file);
+    if(parsed.errors?.length)throw new Error(parsed.errors[0].message);
+    const need=["EmpName","Cardno","EmpCode","Desig_Name","Branch"];
+    if(need.some(h=>!parsed.meta.fields?.includes(h)))throw new Error(`CSV must include ${need.join(", ")} columns.`);
+    const rows=(parsed.data||[]).filter(r=>Object.values(r).some(v=>String(v??"").trim())).map(r=>({employee_id:String(r.EmpCode||"").trim(),name:String(r.EmpName||"").trim(),machine_user_id:String(r.Cardno||"").trim(),role:String(r.Desig_Name||"").trim(),hotel_id:String(r.Branch||"").trim()}));
+    const result=await request("/api/employees/import",{method:"POST",body:{rows}});
+    toast(`Imported: ${result.created} created, ${result.updated} updated.`);
+    await loadEmployees();
+  }catch(e){toast(e.message||errorCopy(e,"Import employees"))}finally{$("employees-file").value=""}
+}
+
+function statusToneClass(status){return {"Present":"bg-emerald-100 text-emerald-800","Present (Incomplete)":"bg-red-100 text-red-800","Present (Worked Weekly Off)":"bg-blue-100 text-blue-800","Weekly Off":"bg-slate-100 text-slate-700","Comp Off":"bg-purple-100 text-purple-800","Absent":"bg-red-100 text-red-800"}[status]||"bg-white text-slate-400"}
+let attendanceByKey=new Map(), attendanceEmployees=[];
+function renderAttendance(){
+  const empty=$("attendance-empty"),wrap=$("attendance-table-wrap");
+  if(state.selectedHotel==="all"){empty.textContent="Select one hotel from the header dropdown to view and edit attendance.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
+  if(!state.attendance.length){empty.textContent="No attendance records for this hotel and month yet.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
+  empty.classList.add("hidden");wrap.classList.remove("hidden");
+  attendanceByKey=new Map();attendanceEmployees=[...new Map(state.attendance.map(r=>[r.employee_id,r.employee_name])).entries()];
+  state.attendance.forEach(r=>attendanceByKey.set(`${r.employee_id}|${r.date}`,r));
+  const [year,month]=selectedMonth().split("-").map(Number);
+  const days=new Date(year,month,0).getDate();
+  $("attendance-table-head").innerHTML=`<tr><th class="sticky left-0 z-10 bg-slate-50 p-3">Date</th>${attendanceEmployees.map(([id,name])=>`<th class="min-w-[130px] p-3">${esc(name)}</th>`).join("")}</tr>`;
+  const rows=[];
+  for(let d=1;d<=days;d++){
+    const date=`${year}-${String(month).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const cells=attendanceEmployees.map(([id])=>{
+      const r=attendanceByKey.get(`${id}|${date}`),status=r?.status||"";
+      if(!r)return `<td class="p-2 text-center text-slate-300">·</td>`;
+      return `<td><button type="button" class="attendance-cell min-h-[44px] w-full p-2 text-left text-xs ${statusToneClass(status)} ${r.overridden?"ring-2 ring-indigo-500":""}" data-employee="${esc(id)}" data-date="${date}">${esc(status)}</button></td>`;
+    }).join("");
+    rows.push(`<tr class="border-t"><th class="sticky left-0 z-10 whitespace-nowrap bg-white p-3 font-semibold">${date}</th>${cells}</tr>`);
+  }
+  $("attendance-table").innerHTML=rows.join("");
+  document.querySelectorAll(".attendance-cell").forEach(cell=>cell.onclick=()=>openAttendancePicker(cell));
+}
+function openAttendancePicker(cell){
+  document.querySelectorAll(".attendance-picker").forEach(x=>x.remove());
+  const picker=document.createElement("div");
+  picker.className="attendance-picker absolute z-50 rounded-lg border bg-white p-2 shadow-xl";
+  picker.innerHTML=["Present","Present (Incomplete)","Present (Worked Weekly Off)","Weekly Off","Comp Off","Absent"].map(s=>`<button type="button" class="block w-full rounded px-2 py-1 text-left text-xs hover:bg-indigo-50" data-status="${s}">${s}</button>`).join("")+`<button type="button" class="mt-1 block w-full border-t pt-1 text-left text-xs text-slate-500" data-status="">Reset to computed</button>`;
+  cell.parentElement.style.position="relative";
+  cell.parentElement.appendChild(picker);
+  picker.querySelectorAll("button").forEach(b=>b.onclick=()=>saveOverride(cell,b.dataset.status,picker));
+  setTimeout(()=>document.addEventListener("click",function close(e){if(!picker.contains(e.target)&&e.target!==cell){picker.remove();document.removeEventListener("click",close)}}),0);
+}
+async function saveOverride(cell,status,picker){
+  const employee_id=cell.dataset.employee,date=cell.dataset.date;
+  try{
+    await request("/api/attendance/override",{method:"POST",body:{employee_id,date,status}});
+    picker.remove();
+    toast(status?"Attendance updated.":"Reset to computed value.");
+    await loadAttendance();
+  }catch(e){toast(errorCopy(e,"Update attendance"))}
+}
+async function loadAttendance(){
+  if(state.selectedHotel==="all"){state.attendance=[];renderAttendance();return}
+  try{const data=await request(`/api/attendance?hotel_id=${encodeURIComponent(state.selectedHotel)}&month=${encodeURIComponent(selectedMonth())}`);state.attendance=data.records||[];renderAttendance()}
+  catch(e){toast(errorCopy(e,"Load attendance"))}
+}
+async function uploadRoster(file){
+  try{
+    const parsed=await parseCsv(file);
+    const need=["employee_id","date","type"];
+    if(need.some(h=>!parsed.meta.fields?.includes(h)))throw new Error(`CSV must include ${need.join(", ")} columns.`);
+    const rows=(parsed.data||[]).filter(r=>r.employee_id).map(r=>({employee_id:String(r.employee_id).trim(),date:String(r.date).trim(),type:String(r.type).trim()}));
+    const result=await request("/api/duty-roster",{method:"POST",body:{rows}});
+    toast(`Roster uploaded: ${result.applied} rows applied.`);await loadAttendance();
+  }catch(e){toast(e.message||errorCopy(e,"Upload roster"))}finally{$("duty-roster-file").value=""}
+}
+async function importDailyAttendance(file){
+  const date=$("daily-attendance-date").value;
+  if(!date){toast("Pick the attendance date first.");return}
+  try{
+    const parsed=await parseCsv(file);
+    const need=["Employee Code","Employee Name","Branch","In Time","Out-Time"];
+    if(need.some(h=>!parsed.meta.fields?.includes(h)))throw new Error(`CSV must include ${need.join(", ")} columns.`);
+    const rows=(parsed.data||[]).filter(r=>r["Employee Code"]).map(r=>({employee_code:String(r["Employee Code"]).trim(),employee_name:String(r["Employee Name"]||"").trim(),branch:String(r.Branch||"").trim(),dept_name:String(r.Dept_Name||"").trim(),desig_name:String(r.Desig_Name||"").trim(),in_time:String(r["In Time"]||"").trim(),out_time:String(r["Out-Time"]||"").trim()}));
+    const result=await request("/api/attendance/daily-summary/import",{method:"POST",body:{date,rows}});
+    toast(`Imported ${result.punches_imported} punches, ${result.employees_created} new employees.`);
+    await loadEmployees();await loadAttendance();
+  }catch(e){toast(e.message||errorCopy(e,"Import daily attendance"))}finally{$("daily-attendance-file").value=""}
+}
+
+function renderCompOff(){
+  const empty=$("compoff-empty"),wrap=$("compoff-table-wrap");
+  if(!state.compoff.length){empty.textContent="No comp-off activity for this scope and month.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
+  empty.classList.add("hidden");wrap.classList.remove("hidden");
+  $("compoff-table").innerHTML=state.compoff.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_name)}</td><td class="p-3">${r.earned_this_month}</td><td class="p-3">${r.used_this_month}</td><td class="p-3 ${r.net_change_this_month<0?"text-red-700":"text-emerald-700"}">${r.net_change_this_month>0?"+":""}${r.net_change_this_month}</td></tr>`).join("");
+}
+async function loadCompOff(){try{const data=await request(`/api/comp-off?hotel_id=${encodeURIComponent(state.selectedHotel)}&month=${encodeURIComponent(selectedMonth())}`);state.compoff=data.records||[];renderCompOff()}catch(e){toast(errorCopy(e,"Load comp-off"))}}
+
+function renderPayroll(){
+  const empty=$("payroll-empty"),wrap=$("payroll-table-wrap");
+  if(!state.payroll.length){empty.textContent="No payroll records for this scope and month.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
+  empty.classList.add("hidden");wrap.classList.remove("hidden");
+  $("payroll-table").innerHTML=state.payroll.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_name)}</td><td class="p-3"><input type="number" min="0" step="0.01" class="salary-input w-28 rounded border p-1.5 text-sm" data-employee="${esc(r.employee_id)}" value="${r.monthly_salary}"></td><td class="p-3">${r.present_days}</td><td class="p-3">${r.absent_days}</td><td class="p-3">${r.weekly_off_days}</td><td class="p-3">${r.comp_off_days}</td><td class="p-3 font-semibold">${r.payable_days}</td><td class="p-3">${r.per_day_rate}</td><td class="p-3 font-bold text-emerald-700">${r.gross_pay}</td></tr>`).join("");
+  document.querySelectorAll(".salary-input").forEach(input=>{
+    input.addEventListener("change",async()=>{
+      const employee_id=input.dataset.employee,value=Number(input.value);
+      if(isNaN(value)||value<0){toast("Salary must be a non-negative number.");return}
+      try{await request(`/api/employees/${encodeURIComponent(employee_id)}/salary`,{method:"POST",body:{monthly_salary:value}});toast("Salary updated.");await loadPayroll()}
+      catch(e){toast(errorCopy(e,"Update salary"))}
+    });
+  });
+}
+async function loadPayroll(){try{const data=await request(`/api/payroll?hotel_id=${encodeURIComponent(state.selectedHotel)}&month=${encodeURIComponent(selectedMonth())}`);state.payroll=data.records||[];renderPayroll()}catch(e){toast(errorCopy(e,"Load payroll"))}}
+
+function activeTab(){return document.querySelector(".tab-view.active")?.id}
+async function refreshActiveTab(){
+  const tab=activeTab();
+  if(tab==="hotel-network"){renderHotelTable()}
+  if(tab==="biometric"){renderBiometricTable()}
+  if(tab==="employees"){renderEmployees()}
+  if(tab==="attendance"){await loadAttendance()}
+  if(tab==="compoff"){await loadCompOff()}
+  if(tab==="payroll"){await loadPayroll()}
+}
+
+document.addEventListener("DOMContentLoaded",async()=>{
+  populateMonths();
+  $("kpi-grid").innerHTML=[["building-2","Hotels","—"],["users","Employees","—"],["calendar-check","Attendance records","—"],["fingerprint","Connected devices","—"],["wallet-cards","Payroll records","—"]]
+    .map(x=>`<article class="panel rounded-2xl bg-white p-4"><div class="flex justify-between"><div><p class="text-xs font-bold uppercase text-slate-500">${x[1]}</p><p class="mt-2 text-2xl font-bold">${x[2]}</p></div><i data-lucide="${x[0]}" class="h-5 w-5 text-indigo-600"></i></div></article>`).join("");
+
+  document.querySelectorAll("[data-view]").forEach(b=>b.onclick=async()=>{
+    document.querySelectorAll(".tab-view").forEach(s=>s.classList.toggle("active",s.id===b.dataset.view));
+    document.querySelectorAll("[data-view]").forEach(x=>x.classList.toggle("active",x===b));
+    await refreshActiveTab();
+  });
+
+  $("hotel-filter").onchange=async e=>{state.selectedHotel=e.target.value;renderKpis();await refreshActiveTab()};
+  $("month-select").onchange=async()=>{await refreshActiveTab()};
+  $("overview-refresh").onclick=async()=>{await loadHotels();$("overview-status").textContent=state.backend?"Backend records refreshed.":"Backend unavailable."};
+  $("reload-hotels").onclick=loadHotels;
+  $("add-hotel").onclick=()=>toggleAddHotelForm(true);
+  $("cancel-add-hotel").onclick=()=>toggleAddHotelForm(false);
+  $("add-hotel-form").onsubmit=addHotel;
+  $("refresh-employees").onclick=loadEmployees;
+  $("import-employees").onclick=()=>$("employees-file").click();
+  $("employees-file").onchange=e=>{if(e.target.files[0])importEmployees(e.target.files[0])};
+  $("download-attendance").onclick=()=>downloadCsv(state.attendance,"attendance-register.csv");
+  $("upload-roster").onclick=()=>$("duty-roster-file").click();
+  $("duty-roster-file").onchange=e=>{if(e.target.files[0])uploadRoster(e.target.files[0])};
+  $("import-daily-attendance").onclick=()=>{const d=$("daily-attendance-date");d.onchange=()=>$("daily-attendance-file").click();d.click()};
+  $("daily-attendance-file").onchange=e=>{if(e.target.files[0])importDailyAttendance(e.target.files[0])};
+  $("download-compoff").onclick=()=>downloadCsv(state.compoff,"comp-off.csv");
+  $("download-payroll").onclick=()=>downloadCsv(state.payroll,"payroll.csv");
+
+  await loadHotels();await loadEmployees();
+  $("overview-status").textContent=state.backend?"Backend status loaded.":"Backend unavailable.";
+  renderKpis();
+  lucide.createIcons();
+});
+</script>
+</body>
+</html>

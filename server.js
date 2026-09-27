@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
+const path = require("path");
 require("dotenv").config();
 
 const app = express();
@@ -19,6 +20,11 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// Serves the dashboard itself — public/index.html — from this same
+// service, at the same URL as the API. Visiting the backend's root URL
+// now shows the actual HRMS dashboard instead of nothing.
+app.use(express.static(path.join(__dirname, "public")));
 
 // ---------------------------------------------------------------------
 // Schema + one-time seed. Runs on every startup; all statements are
