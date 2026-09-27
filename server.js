@@ -47,9 +47,14 @@ async function initDb() {
       hotel_id TEXT,
       role TEXT,
       status TEXT DEFAULT 'Active',
-      machine_user_id TEXT DEFAULT ''
+      machine_user_id TEXT DEFAULT '',
+      monthly_salary NUMERIC DEFAULT 0
     );
   `);
+  // The table above already exists in production from before this column
+  // was added — CREATE TABLE IF NOT EXISTS won't retroactively add a
+  // column to it, so this covers that case explicitly.
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC DEFAULT 0;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS integrations (
@@ -195,8 +200,14 @@ async function computeAttendance(hotelId, month) {
     [empIds]
   );
 
+  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
   const monthStart = `${month}-01`;
-  const monthEnd = `${month}-31`;
+  const monthEnd = `${month}-${String(daysInMonth).padStart(2, "0")}`;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  // Cap at today so a day that hasn't happened yet is never shown/marked
+  // Absent — but if the requested month is entirely in the past, show
+  // every day of it as normal.
+  const displayEnd = todayStr < monthEnd ? todayStr : monthEnd;
   const results = [];
 
   for (const emp of scopeEmployees) {
@@ -219,15 +230,25 @@ async function computeAttendance(hotelId, month) {
       overridesByDate[o.date] = o.status;
     });
 
-    // Include override-only dates too, so a manually-set day shows up
-    // even if there's no punch or roster entry behind it at all.
-    const allDates = Array.from(new Set([
+    // Sparse dates from before this month, purely to carry comp-off
+    // balance forward correctly — plus every calendar day of the
+    // display month itself, so no day is silently skipped.
+    const priorDates = Array.from(new Set([
       ...Object.keys(rosterByDate),
       ...Object.keys(punchesByDate),
       ...Object.keys(overridesByDate)
-    ]))
-      .filter(d => d <= monthEnd)
-      .sort();
+    ])).filter(d => d < monthStart);
+
+    const currentMonthDates = [];
+    if (todayStr >= monthStart) {
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = `${month}-${String(day).padStart(2, "0")}`;
+        if (date > displayEnd) break;
+        currentMonthDates.push(date);
+      }
+    }
+
+    const allDates = [...priorDates, ...currentMonthDates].sort();
 
     let compOffBalance = 0;
 
@@ -276,6 +297,86 @@ async function computeAttendance(hotelId, month) {
   }
 
   return results.sort((a, b) => (a.date === b.date ? a.employee_name.localeCompare(b.employee_name) : a.date.localeCompare(b.date)));
+}
+
+// Turns a month's day-by-day attendance into payroll figures per employee.
+// Simple daily-rate model: monthly_salary / calendar days in month = per-day
+// rate; every day that isn't "Absent" (Present, Present (Incomplete),
+// Present (Worked Weekly Off), Weekly Off, Comp Off) is paid. Absences are
+// unpaid. This intentionally stays simple — no separate deductions/bonuses
+// yet — but gives a real, editable number to work from.
+async function computePayroll(hotelId, month) {
+  const empRes = (hotelId === "all" || !hotelId)
+    ? await pool.query("SELECT * FROM employees")
+    : await pool.query("SELECT * FROM employees WHERE hotel_id = $1", [hotelId]);
+  const scopeEmployees = empRes.rows;
+  if (!scopeEmployees.length) return [];
+
+  const attendance = await computeAttendance(hotelId, month);
+  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+
+  const tallies = {};
+  for (const row of attendance) {
+    const t = (tallies[row.employee_id] ??= { present: 0, absent: 0, weekly_off: 0, comp_off: 0 });
+    if (row.status === "Absent") t.absent++;
+    else if (row.status === "Weekly Off") t.weekly_off++;
+    else if (row.status === "Comp Off") t.comp_off++;
+    else t.present++; // Present, Present (Incomplete), Present (Worked Weekly Off)
+  }
+
+  return scopeEmployees.map(emp => {
+    const t = tallies[emp.id] || { present: 0, absent: 0, weekly_off: 0, comp_off: 0 };
+    const monthlySalary = Number(emp.monthly_salary) || 0;
+    const perDayRate = daysInMonth ? monthlySalary / daysInMonth : 0;
+    const payableDays = t.present + t.weekly_off + t.comp_off;
+    const grossPay = Math.round(perDayRate * payableDays * 100) / 100;
+    return {
+      employee_id: emp.id,
+      employee_name: emp.name,
+      hotel_id: emp.hotel_id,
+      monthly_salary: monthlySalary,
+      days_in_month: daysInMonth,
+      present_days: t.present,
+      absent_days: t.absent,
+      weekly_off_days: t.weekly_off,
+      comp_off_days: t.comp_off,
+      payable_days: payableDays,
+      per_day_rate: Math.round(perDayRate * 100) / 100,
+      gross_pay: grossPay,
+      net_pay: grossPay
+    };
+  }).sort((a, b) => a.employee_name.localeCompare(b.employee_name));
+}
+
+// Comp-off activity per employee within the given month — how many they
+// earned (worked a scheduled day off) and how many were spent (an absence
+// automatically covered by a balance). This is that month's activity, not
+// a true running total-to-date across all months — a day covered this
+// month may have been funded by a credit earned in an earlier month.
+async function computeCompOffLedger(hotelId, month) {
+  const attendance = await computeAttendance(hotelId, month);
+  const empRes = (hotelId === "all" || !hotelId)
+    ? await pool.query("SELECT * FROM employees")
+    : await pool.query("SELECT * FROM employees WHERE hotel_id = $1", [hotelId]);
+
+  const tallies = {};
+  for (const row of attendance) {
+    const t = (tallies[row.employee_id] ??= { earned: 0, used: 0 });
+    if (row.status === "Present (Worked Weekly Off)") t.earned++;
+    else if (row.status === "Comp Off") t.used++;
+  }
+
+  return empRes.rows.map(emp => {
+    const t = tallies[emp.id] || { earned: 0, used: 0 };
+    return {
+      employee_id: emp.id,
+      employee_name: emp.name,
+      hotel_id: emp.hotel_id,
+      earned_this_month: t.earned,
+      used_this_month: t.used,
+      net_change_this_month: t.earned - t.used
+    };
+  }).sort((a, b) => a.employee_name.localeCompare(b.employee_name));
 }
 
 async function findEmployee(code) {
@@ -682,6 +783,8 @@ app.post("/api/employees/import", async (req, res) => {
     for (const row of rows) {
       const employee_id = row.employee_id && String(row.employee_id).trim();
       if (!employee_id) { skipped++; continue; }
+      const salary = row.monthly_salary !== undefined && row.monthly_salary !== "" && !isNaN(Number(row.monthly_salary))
+        ? Number(row.monthly_salary) : null;
       const existingRes = await pool.query("SELECT * FROM employees WHERE id = $1", [employee_id]);
       if (existingRes.rows.length) {
         await pool.query(
@@ -690,16 +793,17 @@ app.post("/api/employees/import", async (req, res) => {
              machine_user_id = COALESCE(NULLIF($3, ''), machine_user_id),
              hotel_id = COALESCE(NULLIF($4, ''), hotel_id),
              role = COALESCE(NULLIF($5, ''), role),
-             status = COALESCE(NULLIF($6, ''), status)
+             status = COALESCE(NULLIF($6, ''), status),
+             monthly_salary = COALESCE($7, monthly_salary)
            WHERE id = $1`,
-          [employee_id, row.name || "", row.machine_user_id || "", row.hotel_id || "", row.role || "", row.status || ""]
+          [employee_id, row.name || "", row.machine_user_id || "", row.hotel_id || "", row.role || "", row.status || "", salary]
         );
         updated++;
       } else {
         await pool.query(
-          `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [employee_id, row.name || "", row.hotel_id || "", row.role || "", row.status || "Active", row.machine_user_id || ""]
+          `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [employee_id, row.name || "", row.hotel_id || "", row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0]
         );
         created++;
       }
@@ -725,6 +829,26 @@ app.post("/api/employees/:id/mapping", async (req, res) => {
     res.json({ status: "success", employee: r.rows[0] });
   } catch (error) {
     console.error("POST /api/employees/:id/mapping failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Set or update one employee's monthly salary, used by payroll.
+app.post("/api/employees/:id/salary", async (req, res) => {
+  try {
+    const raw = req.body && req.body.monthly_salary;
+    const salary = Number(raw);
+    if (raw === undefined || raw === null || isNaN(salary) || salary < 0) {
+      return res.status(400).json({ status: "error", message: "monthly_salary must be a non-negative number." });
+    }
+    const r = await pool.query(
+      "UPDATE employees SET monthly_salary = $1 WHERE id = $2 RETURNING *",
+      [salary, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
+    res.json({ status: "success", employee: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/employees/:id/salary failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
 });
@@ -834,12 +958,30 @@ app.get("/api/duty-roster", async (req, res) => {
   }
 });
 
-app.get("/api/leave", (req, res) => {
-  res.json({ status: "success", records: [] });
+// Query params: hotel_id ("all" or a specific id), month ("YYYY-MM").
+app.get("/api/payroll", async (req, res) => {
+  try {
+    const hotelId = req.query.hotel_id || "all";
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const records = await computePayroll(hotelId, month);
+    res.json({ status: "success", month, hotel_id: hotelId, records });
+  } catch (error) {
+    console.error("GET /api/payroll failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
 });
 
-app.get("/api/payroll", (req, res) => {
-  res.json({ status: "success", records: [] });
+// Query params: hotel_id ("all" or a specific id), month ("YYYY-MM").
+app.get("/api/comp-off", async (req, res) => {
+  try {
+    const hotelId = req.query.hotel_id || "all";
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const records = await computeCompOffLedger(hotelId, month);
+    res.json({ status: "success", month, hotel_id: hotelId, records });
+  } catch (error) {
+    console.error("GET /api/comp-off failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
