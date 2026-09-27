@@ -118,7 +118,10 @@ async function initDb() {
     ["MHB", "Milestone Hotel & Banquet", "MHB", "RSS20230455733"],
     ["EST", "Eastin Suites", "EST", "RSS20230455791"],
     ["CHT", "Chattore", "CHT", "RSS20230455735"],
-    ["VEV", "Voyage Eco Village Resort", "VEV", "RSS20230455906"]
+    ["VEV", "Voyage Eco Village Resort", "VEV", "RSS20230455906"],
+    // Corporate Office has two machines, not one — stored comma-separated;
+    // the lookup below splits on comma so both serials match this hotel.
+    ["HQ", "Corporate Office", "HQ", "RSS20230455946,RSS20230455948"]
   ];
   for (const [id, name, code, device_id] of realHotels) {
     await pool.query(
@@ -287,6 +290,42 @@ app.get("/api/hotels/status", async (req, res) => {
   }
 });
 
+// Add a new hotel from the dashboard. Body: { name, code, device_id }.
+// code becomes the hotel's id (uppercased, alphanumeric only) — this is
+// what gets stored on employees.hotel_id, so it needs to be short and
+// unique. device_id can hold a single serial or several comma-separated
+// (see Corporate Office, which has two machines) — the webhook already
+// splits on comma when matching a punch's device to a hotel.
+app.post("/api/hotels", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const name = body.name ? String(body.name).trim() : "";
+    const rawCode = body.code ? String(body.code).trim() : "";
+    const device_id = body.device_id ? String(body.device_id).trim() : "";
+    if (!name || !rawCode) {
+      return res.status(400).json({ status: "error", message: "name and code are required." });
+    }
+    const code = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!code) {
+      return res.status(400).json({ status: "error", message: "code must contain at least one letter or number." });
+    }
+    const existing = await pool.query("SELECT id FROM hotels WHERE id = $1", [code]);
+    if (existing.rows.length) {
+      return res.status(409).json({ status: "error", message: `A hotel with code "${code}" already exists.` });
+    }
+    const r = await pool.query(
+      `INSERT INTO hotels (id, name, code, attendance_provider, device_id)
+       VALUES ($1, $2, $3, 'Realtime Biometrics', $4)
+       RETURNING *`,
+      [code, name, code, device_id]
+    );
+    res.json({ status: "success", hotel: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/hotels failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
 app.post("/api/hotels/:hotelId/biometric/:action", async (req, res) => {
   try {
     const { hotelId, action } = req.params;
@@ -449,7 +488,7 @@ app.post("/api/biometric/attendance", async (req, res) => {
       if (!known) {
         let hotelId = "";
         if (device_sn) {
-          const h = await pool.query("SELECT id FROM hotels WHERE device_id = $1", [device_sn]);
+          const h = await pool.query("SELECT id FROM hotels WHERE $1 = ANY(string_to_array(device_id, ','))", [device_sn]);
           if (h.rows.length) hotelId = h.rows[0].id;
         }
         await pool.query(
