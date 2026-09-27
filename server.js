@@ -90,6 +90,20 @@ async function initDb() {
     );
   `);
 
+  // A manually-set status for one employee on one day, which takes
+  // precedence over whatever the automatic punch/roster logic would
+  // compute. Lets an admin correct a specific day (e.g. a device was
+  // down, or someone forgot to punch) without touching the underlying
+  // punch data.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS attendance_overrides (
+      employee_id TEXT NOT NULL,
+      date DATE NOT NULL,
+      status TEXT NOT NULL,
+      PRIMARY KEY (employee_id, date)
+    );
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS attendance_logs (
       id SERIAL PRIMARY KEY,
@@ -175,6 +189,11 @@ async function computeAttendance(hotelId, month) {
         [matchCodes]
       )
     : { rows: [] };
+  const overridesRes = await pool.query(
+    `SELECT employee_id, to_char(date, 'YYYY-MM-DD') AS date, status
+     FROM attendance_overrides WHERE employee_id = ANY($1)`,
+    [empIds]
+  );
 
   const monthStart = `${month}-01`;
   const monthEnd = `${month}-31`;
@@ -195,7 +214,18 @@ async function computeAttendance(hotelId, month) {
         punchesByDate[d] = (punchesByDate[d] || 0) + 1;
       });
 
-    const allDates = Array.from(new Set([...Object.keys(rosterByDate), ...Object.keys(punchesByDate)]))
+    const overridesByDate = {};
+    overridesRes.rows.filter(o => String(o.employee_id) === String(emp.id)).forEach(o => {
+      overridesByDate[o.date] = o.status;
+    });
+
+    // Include override-only dates too, so a manually-set day shows up
+    // even if there's no punch or roster entry behind it at all.
+    const allDates = Array.from(new Set([
+      ...Object.keys(rosterByDate),
+      ...Object.keys(punchesByDate),
+      ...Object.keys(overridesByDate)
+    ]))
       .filter(d => d <= monthEnd)
       .sort();
 
@@ -227,6 +257,9 @@ async function computeAttendance(hotelId, month) {
         }
       }
 
+      const overridden = Object.prototype.hasOwnProperty.call(overridesByDate, date);
+      if (overridden) status = overridesByDate[date];
+
       if (date >= monthStart && date <= monthEnd) {
         results.push({
           employee_id: emp.id,
@@ -235,7 +268,8 @@ async function computeAttendance(hotelId, month) {
           date,
           punches,
           status,
-          shift: rosterType || null
+          shift: rosterType || null,
+          overridden
         });
       }
     }
@@ -723,6 +757,35 @@ app.get("/api/attendance", async (req, res) => {
     res.json({ status: "success", month, hotel_id: hotelId, records });
   } catch (error) {
     console.error("GET /api/attendance failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Manually set (or clear) one employee's status for one day, overriding
+// whatever the automatic punch/roster logic would compute for that day.
+// Body: { employee_id, date, status }. Pass an empty/missing status to
+// clear the override and revert that day back to the computed value.
+app.post("/api/attendance/override", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const employee_id = body.employee_id ? String(body.employee_id).trim() : "";
+    const date = ymd(body.date);
+    const status = body.status ? String(body.status).trim() : "";
+    if (!employee_id || !date) {
+      return res.status(400).json({ status: "error", message: "employee_id and a valid date are required." });
+    }
+    if (!status) {
+      await pool.query("DELETE FROM attendance_overrides WHERE employee_id = $1 AND date = $2", [employee_id, date]);
+      return res.json({ status: "success", cleared: true });
+    }
+    await pool.query(
+      `INSERT INTO attendance_overrides (employee_id, date, status) VALUES ($1,$2,$3)
+       ON CONFLICT (employee_id, date) DO UPDATE SET status = EXCLUDED.status`,
+      [employee_id, date, status]
+    );
+    res.json({ status: "success", cleared: false });
+  } catch (error) {
+    console.error("POST /api/attendance/override failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
 });
