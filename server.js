@@ -28,17 +28,40 @@ app.use(express.json());
 // ---------------------------------------------------------------------
 // In-memory mock data. Replace with real DB reads/writes when ready.
 // ---------------------------------------------------------------------
+// Your real properties, taken from Realtime Biometrics' machine list
+// (Device Setup > Machine List). device_id is that machine's serial number.
+// attendance_status/biometric_status start as "Not configured" until you
+// actually set each one up on the Biometric Integration tab — this list
+// alone doesn't mean the integration is live, just that the property exists.
 let hotels = [
-  { id: "1", name: "Voyage Riverside", code: "VR-01", attendance_provider: "Realtime Biometrics", attendance_status: "Connected", device_id: "SN-009128", biometric_status: "Connected", last_sync: "2026-09-27 02:20:00" },
-  { id: "2", name: "Voyage Hillview", code: "VH-02", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "—", biometric_status: "Not configured", last_sync: "No records" },
-  { id: "3", name: "Voyage Marina", code: "VM-03", attendance_provider: "—", attendance_status: "Not configured", device_id: "—", biometric_status: "Not configured", last_sync: "No records" }
+  { id: "HAAC", name: "Hotel Alpine Abode Continental", code: "HAAC", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455731", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "TRR", name: "The Royal Retreat", code: "TRR", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455826", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "SFR", name: "Songfum Retreat", code: "SFR", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455737", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "GLZ", name: "Glenz Resort", code: "GLZ", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455736", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "DVR", name: "Dream Villa Retreat", code: "DVR", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455740", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "TAR", name: "The Aryan Regency", code: "TAR", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455949", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "RDH", name: "Rodhi Resort", code: "RDH", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455734", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "MHB", name: "Milestone Hotel & Banquet", code: "MHB", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455733", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "EST", name: "Eastin Suites", code: "EST", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455791", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "CHT", name: "Chattore", code: "CHT", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455735", biometric_status: "Not configured", last_sync: "No records" },
+  { id: "VEV", name: "Voyage Eco Village Resort", code: "VEV", attendance_provider: "Realtime Biometrics", attendance_status: "Not configured", device_id: "RSS20230455906", biometric_status: "Not configured", last_sync: "No records" }
 ];
 
+// id is the HRMS-side employee code (e.g. "VCOR001"), what you use everywhere
+// in this system — the duty roster, this table, etc.
+// machine_user_id is the separate numeric User ID / Card No. configured on
+// the physical biometric device — this is what actually shows up as
+// employee_code in incoming punches, and is NOT the same as id. Nothing
+// links them automatically; that's what the mapping below is for.
 let employees = [
-  { id: "E1001", name: "Asha Rao", hotel_id: "1", role: "Front Desk", status: "Active" },
-  { id: "E1023", name: "Vikram Shah", hotel_id: "1", role: "Housekeeping", status: "Active" },
-  { id: "E2001", name: "Priya Nair", hotel_id: "2", role: "Front Desk", status: "Active" }
+  { id: "VCOR001", name: "Souradeep Das", hotel_id: "HAAC", role: "Digital Marketing Executive", status: "Active", machine_user_id: "00000001" },
+  { id: "VCOR002", name: "Tanmay Bhowmick", hotel_id: "HAAC", role: "Graphic Designer", status: "Active", machine_user_id: "00000002" },
+  { id: "VCOR003", name: "Raj Majhi", hotel_id: "TRR", role: "Guest Relations Executive", status: "Active", machine_user_id: "00000003" }
 ];
+
+function findEmployeeByMachineId(machineUserId) {
+  return employees.find(e => String(e.machine_user_id) === String(machineUserId));
+}
 
 let integrations = []; // populated via POST /api/biometric/integrations/config
 let attendanceLogs = []; // populated via POST /api/biometric/attendance (the real device webhook)
@@ -87,7 +110,7 @@ function computeAttendance(hotelId, month) {
     });
 
     const punchesByDate = {};
-    attendanceLogs.filter(l => String(l.employee_code) === String(emp.id)).forEach(l => {
+    attendanceLogs.filter(l => String(l.employee_code) === String(emp.machine_user_id)).forEach(l => {
       const d = ymd(l.log_datetime || l.received_at);
       if (!d) return;
       punchesByDate[d] = (punchesByDate[d] || 0) + 1;
@@ -314,8 +337,61 @@ app.post("/api/biometric/attendance", (req, res) => {
 //    are here so that work can plug in without also needing backend
 //    changes later.
 // ---------------------------------------------------------------------
+// Bulk import/update employees — built to accept rows shaped like the
+// Realtime Biometrics employee export (EmpName, Cardno, EmpCode, Dept_Name,
+// Desig_Name, Branch), but works with any rows using these field names.
+// Body: { rows: [{ employee_id, name, machine_user_id, hotel_id, role }] }
+// Upserts by employee_id: creates new employees, updates existing ones.
+app.post("/api/employees/import", (req, res) => {
+  const rows = (req.body && req.body.rows) || [];
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ status: "error", message: "rows must be a non-empty array." });
+  }
+  let created = 0, updated = 0, skipped = 0;
+  for (const row of rows) {
+    const employee_id = row.employee_id && String(row.employee_id).trim();
+    if (!employee_id) { skipped++; continue; }
+    const existing = employees.find(e => String(e.id) === employee_id);
+    const fields = {
+      name: row.name ? String(row.name).trim() : (existing ? existing.name : ""),
+      machine_user_id: row.machine_user_id ? String(row.machine_user_id).trim() : (existing ? existing.machine_user_id : ""),
+      hotel_id: row.hotel_id ? String(row.hotel_id).trim() : (existing ? existing.hotel_id : ""),
+      role: row.role ? String(row.role).trim() : (existing ? existing.role : ""),
+      status: row.status ? String(row.status).trim() : (existing ? existing.status : "Active")
+    };
+    if (existing) {
+      Object.assign(existing, fields);
+      updated++;
+    } else {
+      employees.push({ id: employee_id, ...fields });
+      created++;
+    }
+  }
+  res.json({ status: "success", created, updated, skipped, total_employees: employees.length });
+});
+
 app.get("/api/employees", (req, res) => {
   res.json({ status: "success", records: employees });
+});
+
+// Set or update one employee's biometric machine User ID / Card No.
+// Body: { machine_user_id: "000001" }
+app.post("/api/employees/:id/mapping", (req, res) => {
+  const emp = employees.find(e => String(e.id) === String(req.params.id));
+  if (!emp) return res.status(404).json({ status: "error", message: "Employee not found" });
+  const machineUserId = req.body && req.body.machine_user_id ? String(req.body.machine_user_id).trim() : "";
+  if (!machineUserId) return res.status(400).json({ status: "error", message: "machine_user_id is required" });
+  emp.machine_user_id = machineUserId;
+  res.json({ status: "success", employee: emp });
+});
+
+// Punches whose employee_code doesn't match any employee's machine_user_id —
+// these are real device punches that can't be attributed to anyone yet,
+// usually because that person's mapping hasn't been set up.
+app.get("/api/biometric/unmapped-punches", (req, res) => {
+  const mappedIds = new Set(employees.map(e => String(e.machine_user_id)));
+  const unmapped = attendanceLogs.filter(l => !mappedIds.has(String(l.employee_code)));
+  res.json({ status: "success", records: unmapped });
 });
 
 // Query params: hotel_id ("all" or a specific id), month ("YYYY-MM").
