@@ -36,11 +36,114 @@ let hotels = [
 
 let employees = [
   { id: "E1001", name: "Asha Rao", hotel_id: "1", role: "Front Desk", status: "Active" },
-  { id: "E1023", name: "Vikram Shah", hotel_id: "1", role: "Housekeeping", status: "Active" }
+  { id: "E1023", name: "Vikram Shah", hotel_id: "1", role: "Housekeeping", status: "Active" },
+  { id: "E2001", name: "Priya Nair", hotel_id: "2", role: "Front Desk", status: "Active" }
 ];
 
 let integrations = []; // populated via POST /api/biometric/integrations/config
 let attendanceLogs = []; // populated via POST /api/biometric/attendance (the real device webhook)
+
+// Duty roster: one row per employee per date. type is "Weekly Off" or a
+// working-shift label (e.g. "Morning", "Evening", "General"). Uploaded via
+// POST /api/duty-roster as parsed CSV/Excel rows from the frontend.
+// { employee_id, date: "YYYY-MM-DD", type }
+let dutyRoster = [];
+
+// Pull just the YYYY-MM-DD part out of whatever date format shows up
+// (biometric punches send "YYYY-MM-DD HH:mm:ss", roster rows send plain dates).
+function ymd(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const d = new Date(s);
+  if (!isNaN(d)) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+// Computes a day-by-day attendance status per employee, chronologically, so
+// a comp-off earned on one day can be spent on any later absence — not just
+// the next calendar day.
+//
+// Rules:
+//  - Roster says "Weekly Off" + employee has punches that day  -> "Present (Worked Weekly Off)", +1 comp-off credit
+//  - Roster says "Weekly Off" + no punches                      -> "Weekly Off"
+//  - Working day (roster says a shift, or no roster entry at all) + 2+ punches -> "Present"
+//  - Working day + exactly 1 punch                              -> "Present (Incomplete)" (missing checkout)
+//  - Working day + 0 punches + comp-off balance available       -> "Comp Off" (auto-applied, balance -1)
+//  - Working day + 0 punches + no comp-off balance               -> "Absent"
+function computeAttendance(hotelId, month) {
+  const scopeEmployees = employees.filter(e => hotelId === "all" || !hotelId || String(e.hotel_id) === String(hotelId));
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-31`; // simple upper bound, fine for string comparison of YYYY-MM-DD
+
+  const results = [];
+
+  for (const emp of scopeEmployees) {
+    const rosterByDate = {};
+    dutyRoster.filter(r => String(r.employee_id) === String(emp.id)).forEach(r => {
+      const d = ymd(r.date);
+      if (d) rosterByDate[d] = r.type;
+    });
+
+    const punchesByDate = {};
+    attendanceLogs.filter(l => String(l.employee_code) === String(emp.id)).forEach(l => {
+      const d = ymd(l.log_datetime || l.received_at);
+      if (!d) return;
+      punchesByDate[d] = (punchesByDate[d] || 0) + 1;
+    });
+
+    // Walk every date that has either a roster entry or a punch, in order,
+    // up through the end of the requested month, so comp-off balance carries
+    // forward correctly from earlier months.
+    const allDates = Array.from(new Set([...Object.keys(rosterByDate), ...Object.keys(punchesByDate)]))
+      .filter(d => d <= monthEnd)
+      .sort();
+
+    let compOffBalance = 0;
+
+    for (const date of allDates) {
+      const punches = punchesByDate[date] || 0;
+      const rosterType = rosterByDate[date];
+      const isWeeklyOff = rosterType === "Weekly Off";
+      let status;
+
+      if (isWeeklyOff) {
+        if (punches > 0) {
+          status = "Present (Worked Weekly Off)";
+          compOffBalance += 1;
+        } else {
+          status = "Weekly Off";
+        }
+      } else {
+        if (punches >= 2) {
+          status = "Present";
+        } else if (punches === 1) {
+          status = "Present (Incomplete)";
+        } else if (compOffBalance > 0) {
+          status = "Comp Off";
+          compOffBalance -= 1;
+        } else {
+          status = "Absent";
+        }
+      }
+
+      if (date >= monthStart && date <= monthEnd) {
+        results.push({
+          employee_id: emp.id,
+          employee_name: emp.name,
+          hotel_id: emp.hotel_id,
+          date,
+          punches,
+          status,
+          shift: rosterType || null
+        });
+      }
+    }
+  }
+
+  return results.sort((a, b) => (a.date === b.date ? a.employee_name.localeCompare(b.employee_name) : a.date.localeCompare(b.date)));
+}
 
 function findIntegration(hotel_id, device_sn) {
   return integrations.find(x => String(x.hotel_id) === String(hotel_id) && String(x.device_sn) === String(device_sn));
@@ -215,8 +318,47 @@ app.get("/api/employees", (req, res) => {
   res.json({ status: "success", records: employees });
 });
 
+// Query params: hotel_id ("all" or a specific id), month ("YYYY-MM").
+// Defaults to the current server month if not given.
 app.get("/api/attendance", (req, res) => {
-  res.json({ status: "success", records: attendanceLogs });
+  const hotelId = req.query.hotel_id || "all";
+  const month = req.query.month || new Date().toISOString().slice(0, 7);
+  const records = computeAttendance(hotelId, month);
+  res.json({ status: "success", month, hotel_id: hotelId, records });
+});
+
+// Upload/replace duty roster rows. Body: { rows: [{ employee_id, date, type }] }
+// Existing entries for the same employee_id + date are overwritten; anything
+// not included in this upload is left untouched (so partial re-uploads for
+// just one hotel or one month don't wipe out the rest of the roster).
+app.post("/api/duty-roster", (req, res) => {
+  const rows = (req.body && req.body.rows) || [];
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ status: "error", message: "rows must be a non-empty array of { employee_id, date, type }." });
+  }
+  let applied = 0;
+  for (const row of rows) {
+    const employee_id = row.employee_id && String(row.employee_id).trim();
+    const date = ymd(row.date);
+    const type = row.type && String(row.type).trim();
+    if (!employee_id || !date || !type) continue;
+    dutyRoster = dutyRoster.filter(r => !(String(r.employee_id) === employee_id && ymd(r.date) === date));
+    dutyRoster.push({ employee_id, date, type });
+    applied++;
+  }
+  res.json({ status: "success", applied, skipped: rows.length - applied });
+});
+
+app.get("/api/duty-roster", (req, res) => {
+  const hotelId = req.query.hotel_id || "all";
+  const month = req.query.month;
+  const employeeIds = hotelId === "all" ? null : employees.filter(e => String(e.hotel_id) === String(hotelId)).map(e => e.id);
+  const rows = dutyRoster.filter(r => {
+    if (employeeIds && !employeeIds.includes(String(r.employee_id))) return false;
+    if (month && !String(r.date).startsWith(month)) return false;
+    return true;
+  });
+  res.json({ status: "success", records: rows });
 });
 
 app.get("/api/leave", (req, res) => {
