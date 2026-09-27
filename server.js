@@ -54,13 +54,19 @@ async function initDb() {
       role TEXT,
       status TEXT DEFAULT 'Active',
       machine_user_id TEXT DEFAULT '',
-      monthly_salary NUMERIC DEFAULT 0
+      monthly_salary NUMERIC DEFAULT 0,
+      date_of_joining DATE,
+      property_code TEXT DEFAULT ''
     );
   `);
-  // The table above already exists in production from before this column
-  // was added — CREATE TABLE IF NOT EXISTS won't retroactively add a
+  // The table above already exists in production from before these columns
+  // were added — CREATE TABLE IF NOT EXISTS won't retroactively add a
   // column to it, so this covers that case explicitly.
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC DEFAULT 0;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS date_of_joining DATE;`);
+  // Purely a human-readable label (e.g. "VCOR001") — not used for any
+  // HRMS or biometric matching logic, unlike id or machine_user_id.
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS property_code TEXT DEFAULT '';`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS integrations (
@@ -224,7 +230,11 @@ async function computeAttendance(hotelId, month) {
 
     const punchesByDate = {};
     logsRes.rows
-      .filter(l => String(l.employee_code) === String(emp.machine_user_id) || String(l.employee_code) === String(emp.id))
+      .filter(l => {
+        const code = l.employee_code ? String(l.employee_code) : "";
+        if (!code) return false; // never match a blank punch code to a blank machine_user_id
+        return (emp.machine_user_id && code === String(emp.machine_user_id)) || code === String(emp.id);
+      })
       .forEach(l => {
         const d = ymd(l.log_datetime || l.received_at);
         if (!d) return;
@@ -383,6 +393,34 @@ async function computeCompOffLedger(hotelId, month) {
       net_change_this_month: t.earned - t.used
     };
   }).sort((a, b) => a.employee_name.localeCompare(b.employee_name));
+}
+
+// Cleans up auto-created placeholder employees (the "Unmapped (00000123)"
+// records the webhook creates for unrecognized punches) once a real
+// employee exists whose machine_user_id matches that placeholder's id.
+// Without this, both records would independently match the same raw
+// punches (by id and by machine_user_id respectively), double-counting
+// that person's attendance. Only removes rows that look like our own
+// auto-generated placeholders — never a real employee whose id happens
+// to coincide with someone else's card number.
+async function mergePlaceholderEmployees() {
+  const allRes = await pool.query("SELECT id, name, machine_user_id FROM employees");
+  const all = allRes.rows;
+  const placeholderPattern = /^Unmapped \(.+\)$/;
+  let merged = 0;
+  for (const emp of all) {
+    if (!emp.machine_user_id || String(emp.machine_user_id) === String(emp.id)) continue;
+    const placeholder = all.find(e =>
+      String(e.id) === String(emp.machine_user_id) &&
+      String(e.id) !== String(emp.id) &&
+      placeholderPattern.test(e.name || "")
+    );
+    if (placeholder) {
+      await pool.query("DELETE FROM employees WHERE id = $1", [placeholder.id]);
+      merged++;
+    }
+  }
+  return merged;
 }
 
 async function findEmployee(code) {
@@ -632,11 +670,18 @@ app.post("/api/biometric/attendance", async (req, res) => {
           const h = await pool.query("SELECT id FROM hotels WHERE $1 = ANY(string_to_array(device_id, ','))", [device_sn]);
           if (h.rows.length) hotelId = h.rows[0].id;
         }
+        // The device's Card No / User ID field is numeric-only — it
+        // physically cannot contain letters. So only treat this code as
+        // a real machine_user_id if it's purely digits; otherwise it's a
+        // resolved code or name Realtime substituted (for someone without
+        // a proper card number set up there), and machine_user_id should
+        // stay blank rather than store something that isn't really one.
+        const isNumericCardNo = /^\d+$/.test(code);
         await pool.query(
           `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id)
-           VALUES ($1, $2, $3, '', 'Active', $1)
+           VALUES ($1, $2, $3, '', 'Active', $4)
            ON CONFLICT (id) DO NOTHING`,
-          [code, `Unmapped (${code})`, hotelId]
+          [code, `Unmapped (${code})`, hotelId, isNumericCardNo ? code : ""]
         );
       }
     }
@@ -775,6 +820,71 @@ app.get("/api/employees", async (req, res) => {
   }
 });
 
+// Creates exactly one new employee, entered directly (not from a CSV
+// import). Errors if the id already exists, rather than silently
+// updating — use PATCH /api/employees/:id to edit an existing one.
+// Body: { id, name, hotel_id, role, monthly_salary, date_of_joining,
+// machine_user_id }. Only id and name are required.
+app.post("/api/employees", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const id = body.id ? String(body.id).trim() : "";
+    const name = body.name ? String(body.name).trim() : "";
+    if (!id || !name) {
+      return res.status(400).json({ status: "error", message: "id and name are required." });
+    }
+    const existing = await pool.query("SELECT id FROM employees WHERE id = $1", [id]);
+    if (existing.rows.length) {
+      return res.status(409).json({ status: "error", message: `Employee ${id} already exists. Use edit instead.` });
+    }
+    const salary = body.monthly_salary !== undefined && !isNaN(Number(body.monthly_salary)) ? Number(body.monthly_salary) : 0;
+    const doj = ymd(body.date_of_joining);
+    const r = await pool.query(
+      `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code)
+       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8) RETURNING *`,
+      [id, name, body.hotel_id ? String(body.hotel_id).trim() : "", body.role ? String(body.role).trim() : "",
+       body.machine_user_id ? String(body.machine_user_id).trim() : "", salary, doj,
+       body.property_code ? String(body.property_code).trim() : ""]
+    );
+    res.json({ status: "success", employee: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/employees failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Edits an existing employee's core fields. Any field left out keeps its
+// current value. Body: any of { name, hotel_id, role, monthly_salary,
+// date_of_joining, machine_user_id, status, property_code }.
+app.patch("/api/employees/:id", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const existing = await pool.query("SELECT * FROM employees WHERE id = $1", [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
+    const current = existing.rows[0];
+    const salary = body.monthly_salary !== undefined && !isNaN(Number(body.monthly_salary)) ? Number(body.monthly_salary) : current.monthly_salary;
+    const doj = body.date_of_joining !== undefined ? ymd(body.date_of_joining) : current.date_of_joining;
+    const r = await pool.query(
+      `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9
+       WHERE id=$1 RETURNING *`,
+      [
+        req.params.id,
+        body.name !== undefined ? String(body.name).trim() : current.name,
+        body.hotel_id !== undefined ? String(body.hotel_id).trim() : current.hotel_id,
+        body.role !== undefined ? String(body.role).trim() : current.role,
+        body.machine_user_id !== undefined ? String(body.machine_user_id).trim() : current.machine_user_id,
+        salary, doj,
+        body.status !== undefined ? String(body.status).trim() : current.status,
+        body.property_code !== undefined ? String(body.property_code).trim() : current.property_code
+      ]
+    );
+    res.json({ status: "success", employee: r.rows[0] });
+  } catch (error) {
+    console.error("PATCH /api/employees/:id failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
 // Deletes every employee record. Requires { confirm: true } in the body
 // as a guard against accidental calls. Attendance logs, duty roster
 // entries, and overrides are left untouched — they'll just stop matching
@@ -790,6 +900,21 @@ app.delete("/api/employees", async (req, res) => {
     res.json({ status: "success", deleted: r.rowCount });
   } catch (error) {
     console.error("DELETE /api/employees failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Runs the same placeholder-merge that happens automatically after a
+// bulk import, but on demand — useful if real punches created new
+// "Unmapped" placeholders after your last import and you want to
+// reconcile them without re-uploading the whole employee list.
+app.post("/api/employees/sync-biometric", async (req, res) => {
+  try {
+    const merged = await mergePlaceholderEmployees();
+    const total = await pool.query("SELECT COUNT(*) FROM employees");
+    res.json({ status: "success", merged, total_employees: Number(total.rows[0].count) });
+  } catch (error) {
+    console.error("POST /api/employees/sync-biometric failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
 });
@@ -810,6 +935,7 @@ app.post("/api/employees/import", async (req, res) => {
       if (!employee_id) { skipped++; continue; }
       const salary = row.monthly_salary !== undefined && row.monthly_salary !== "" && !isNaN(Number(row.monthly_salary))
         ? Number(row.monthly_salary) : null;
+      const doj = row.date_of_joining ? ymd(row.date_of_joining) : null;
       const existingRes = await pool.query("SELECT * FROM employees WHERE id = $1", [employee_id]);
       if (existingRes.rows.length) {
         await pool.query(
@@ -819,22 +945,25 @@ app.post("/api/employees/import", async (req, res) => {
              hotel_id = COALESCE(NULLIF($4, ''), hotel_id),
              role = COALESCE(NULLIF($5, ''), role),
              status = COALESCE(NULLIF($6, ''), status),
-             monthly_salary = COALESCE($7, monthly_salary)
+             monthly_salary = COALESCE($7, monthly_salary),
+             date_of_joining = COALESCE($8, date_of_joining),
+             property_code = COALESCE(NULLIF($9, ''), property_code)
            WHERE id = $1`,
-          [employee_id, row.name || "", row.machine_user_id || "", row.hotel_id || "", row.role || "", row.status || "", salary]
+          [employee_id, row.name || "", row.machine_user_id || "", row.hotel_id || "", row.role || "", row.status || "", salary, doj, row.property_code || ""]
         );
         updated++;
       } else {
         await pool.query(
-          `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [employee_id, row.name || "", row.hotel_id || "", row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0]
+          `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [employee_id, row.name || "", row.hotel_id || "", row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || ""]
         );
         created++;
       }
     }
+    const merged = await mergePlaceholderEmployees();
     const total = await pool.query("SELECT COUNT(*) FROM employees");
-    res.json({ status: "success", created, updated, skipped, total_employees: Number(total.rows[0].count) });
+    res.json({ status: "success", created, updated, skipped, merged, total_employees: Number(total.rows[0].count) });
   } catch (error) {
     console.error("POST /api/employees/import failed:", error);
     res.status(500).json({ status: "error", message: error.message });

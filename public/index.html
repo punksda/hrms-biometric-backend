@@ -103,13 +103,29 @@
         <section class="panel mt-6 rounded-2xl bg-white p-6">
           <div class="flex flex-wrap justify-end gap-2">
             <input id="employees-file" type="file" accept=".csv" class="hidden">
-            <button id="import-employees" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Import Employees</button>
+            <button id="add-employee" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Add Employee</button>
+            <button id="import-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Import CSV</button>
             <button id="refresh-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
+            <button id="sync-biometric" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Sync with Biometric</button>
             <button id="delete-all-employees" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete All</button>
           </div>
+          <form id="add-employee-form" class="mt-4 hidden rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <div class="grid gap-3 md:grid-cols-3">
+              <div><label class="mb-1 block text-sm font-semibold">Employee ID</label><input id="new-emp-id" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. VCOR045"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Name</label><input id="new-emp-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Hotel</label><select id="new-emp-hotel" class="w-full rounded-lg border p-2.5 text-sm"><option value="">Select hotel</option></select></div>
+              <div><label class="mb-1 block text-sm font-semibold">Role</label><input id="new-emp-role" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Monthly Salary</label><input id="new-emp-salary" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Date of Joining</label><input id="new-emp-doj" type="date" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Card No / Device User ID <span class="font-normal text-slate-500">(optional, numeric only — this is the biometric device's own ID, not the Employee ID)</span></label><input id="new-emp-card" inputmode="numeric" pattern="[0-9]*" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Property Identifier <span class="font-normal text-slate-500">(optional, e.g. VCOR001 — just a reference label, not used for matching)</span></label><input id="new-emp-property-code" class="w-full rounded-lg border p-2.5 text-sm"></div>
+            </div>
+            <p id="add-employee-error" class="mt-3 hidden text-sm text-red-700"></p>
+            <div class="mt-4 flex gap-2"><button id="submit-add-employee" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Save employee</button><button id="cancel-add-employee" type="button" class="rounded-lg border bg-white px-4 py-2.5 text-sm font-bold">Cancel</button></div>
+          </form>
           <div id="employee-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No employee records loaded.</div>
-          <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[700px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee ID</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Role</th><th class="p-3">Status</th></tr></thead>
+          <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[860px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee ID</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Role</th><th class="p-3">Monthly Salary</th><th class="p-3">Date of Joining</th><th class="p-3">Status</th></tr></thead>
             <tbody id="employee-table"></tbody>
           </table></div>
         </section>
@@ -236,6 +252,7 @@ async function loadHotels(){
     const opts=state.hotels.map(h=>`<option value="${esc(h.id)}">${esc(h.code||h.id)} · ${esc(h.name)}</option>`).join("");
     $("hotel-filter").innerHTML=`<option value="all">All Hotels</option>${opts}`;
     $("hotel-filter").value=state.selectedHotel;
+    populateEmployeeHotelSelect();
     renderHotelTable();renderBiometricTable();renderKpis();
   }catch(e){setBackend(false);$("hotel-table").innerHTML=`<tr><td colspan="6" class="p-8 text-center text-red-700">Backend unavailable.</td></tr>`}
 }
@@ -267,7 +284,29 @@ function renderEmployees(){
   const empty=$("employee-empty"),wrap=$("employee-table-wrap");
   if(!rows.length){empty.textContent="No employee records loaded.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
   empty.classList.add("hidden");wrap.classList.remove("hidden");
-  $("employee-table").innerHTML=rows.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role||"—")}</td><td class="p-3">${esc(r.status||"—")}</td></tr>`).join("");
+  $("employee-table").innerHTML=rows.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code?`<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>`:""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role||"—")}</td><td class="p-3">${r.monthly_salary?Number(r.monthly_salary).toLocaleString():"—"}</td><td class="p-3">${esc(r.date_of_joining||"—")}</td><td class="p-3">${esc(r.status||"—")}</td></tr>`).join("");
+}
+function toggleAddEmployeeForm(open){const f=$("add-employee-form");f.classList.toggle("hidden",!open);if(!open){f.reset();$("add-employee-error").classList.add("hidden")}}
+function populateEmployeeHotelSelect(){$("new-emp-hotel").innerHTML=`<option value="">Select hotel</option>`+state.hotels.map(h=>`<option value="${esc(h.id)}">${esc(h.code||h.id)} · ${esc(h.name)}</option>`).join("")}
+async function addEmployee(ev){
+  ev.preventDefault();
+  const id=$("new-emp-id").value.trim(),name=$("new-emp-name").value.trim(),cardNo=$("new-emp-card").value.trim(),err=$("add-employee-error"),btn=$("submit-add-employee");
+  if(!id||!name){err.textContent="Employee ID and Name are required.";err.classList.remove("hidden");return}
+  if(cardNo&&!/^\d+$/.test(cardNo)){err.textContent="Card No / Device User ID must contain numbers only — that's a limit of the biometric device itself.";err.classList.remove("hidden");return}
+  err.classList.add("hidden");btn.disabled=true;btn.textContent="Saving…";
+  try{
+    await request("/api/employees",{method:"POST",body:{
+      id,name,
+      hotel_id:$("new-emp-hotel").value,
+      role:$("new-emp-role").value.trim(),
+      monthly_salary:$("new-emp-salary").value||0,
+      date_of_joining:$("new-emp-doj").value||null,
+      machine_user_id:cardNo,
+      property_code:$("new-emp-property-code").value.trim()
+    }});
+    toast(`Employee ${name} added.`);toggleAddEmployeeForm(false);await loadEmployees();
+  }catch(e){err.textContent=e.message||errorCopy(e,"Add employee");err.classList.remove("hidden")}
+  finally{btn.disabled=false;btn.textContent="Save employee"}
 }
 async function loadEmployees(){try{const data=await request("/api/employees");state.employees=data.records||[];renderEmployees()}catch(e){toast(errorCopy(e,"Load employees"))}}
 async function deleteAllEmployees(){
@@ -287,14 +326,44 @@ async function importEmployees(file){
     if(parsed.errors?.length)throw new Error(parsed.errors[0].message);
     const need=["EmpName","Cardno","EmpCode","Desig_Name","Branch"];
     if(need.some(h=>!parsed.meta.fields?.includes(h)))throw new Error(`CSV must include ${need.join(", ")} columns.`);
-    const rows=(parsed.data||[]).filter(r=>Object.values(r).some(v=>String(v??"").trim())).map(r=>({employee_id:String(r.EmpCode||"").trim(),name:String(r.EmpName||"").trim(),machine_user_id:String(r.Cardno||"").trim(),role:String(r.Desig_Name||"").trim(),hotel_id:String(r.Branch||"").trim()}));
+    const hasSalary=parsed.meta.fields?.includes("Monthly Salary");
+    const hasDoj=parsed.meta.fields?.includes("Date of Joining");
+    const hasPropertyCode=parsed.meta.fields?.includes("Property ID");
+    const rows=(parsed.data||[]).filter(r=>Object.values(r).some(v=>String(v??"").trim())).map(r=>({
+      employee_id:String(r.EmpCode||"").trim(),
+      name:String(r.EmpName||"").trim(),
+      machine_user_id:String(r.Cardno||"").trim(),
+      role:String(r.Desig_Name||"").trim(),
+      hotel_id:String(r.Branch||"").trim(),
+      monthly_salary:hasSalary?String(r["Monthly Salary"]||"").trim():undefined,
+      date_of_joining:hasDoj?String(r["Date of Joining"]||"").trim():undefined,
+      property_code:hasPropertyCode?String(r["Property ID"]||"").trim():undefined
+    }));
     const result=await request("/api/employees/import",{method:"POST",body:{rows}});
-    toast(`Imported: ${result.created} created, ${result.updated} updated.`);
+    toast(`Imported: ${result.created} created, ${result.updated} updated${result.merged?`, ${result.merged} biometric placeholder(s) merged`:""}.`);
     await loadEmployees();
   }catch(e){toast(e.message||errorCopy(e,"Import employees"))}finally{$("employees-file").value=""}
 }
+async function syncBiometric(){
+  try{
+    const result=await request("/api/employees/sync-biometric",{method:"POST"});
+    toast(result.merged?`Merged ${result.merged} placeholder employee(s) into their real records.`:"Nothing to merge — no placeholders matched a real employee yet.");
+    await loadEmployees();
+  }catch(e){toast(errorCopy(e,"Sync with biometric data"))}
+}
 
-function statusToneClass(status){return {"Present":"bg-emerald-100 text-emerald-800","Present (Incomplete)":"bg-red-100 text-red-800","Present (Worked Weekly Off)":"bg-blue-100 text-blue-800","Weekly Off":"bg-slate-100 text-slate-700","Comp Off":"bg-purple-100 text-purple-800","Absent":"bg-red-100 text-red-800"}[status]||"bg-white text-slate-400"}
+function statusToneClass(status,punches){
+  if(status==="Absent")return "bg-red-100 text-red-800";
+  if(status==="Weekly Off")return "bg-slate-100 text-slate-700";
+  if(status==="Comp Off")return "bg-purple-100 text-purple-800";
+  if(status&&status.indexOf("Present")===0){
+    // Marked present, but does the biometric device agree? No punch that
+    // day = red flag (marked present without device confirmation);
+    // any punch = green (confirmed by the device).
+    return (punches>0)?"bg-emerald-100 text-emerald-800":"bg-red-100 text-red-800";
+  }
+  return "bg-white text-slate-400";
+}
 let attendanceByKey=new Map(), attendanceEmployees=[];
 function renderAttendance(){
   const empty=$("attendance-empty"),wrap=$("attendance-table-wrap");
@@ -310,9 +379,10 @@ function renderAttendance(){
   for(let d=1;d<=days;d++){
     const date=`${year}-${String(month).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
     const cells=attendanceEmployees.map(([id])=>{
-      const r=attendanceByKey.get(`${id}|${date}`),status=r?.status||"";
+      const r=attendanceByKey.get(`${id}|${date}`),status=r?.status||"",punches=r?.punches||0;
       if(!r)return `<td class="p-2 text-center text-slate-300">·</td>`;
-      return `<td><button type="button" class="attendance-cell min-h-[44px] w-full p-2 text-left text-xs ${statusToneClass(status)} ${r.overridden?"ring-2 ring-indigo-500":""}" data-employee="${esc(id)}" data-date="${date}">${esc(status)}</button></td>`;
+      const punchNote=status.indexOf("Present")===0?`<span class="block text-[10px] opacity-70">${punches} punch${punches===1?"":"es"}</span>`:"";
+      return `<td><button type="button" class="attendance-cell min-h-[44px] w-full p-2 text-left text-xs ${statusToneClass(status,punches)} ${r.overridden?"ring-2 ring-indigo-500":""}" data-employee="${esc(id)}" data-date="${date}">${esc(status)}${punchNote}</button></td>`;
     }).join("");
     rows.push(`<tr class="border-t"><th class="sticky left-0 z-10 whitespace-nowrap bg-white p-3 font-semibold">${date}</th>${cells}</tr>`);
   }
@@ -421,7 +491,11 @@ document.addEventListener("DOMContentLoaded",async()=>{
   $("cancel-add-hotel").onclick=()=>toggleAddHotelForm(false);
   $("add-hotel-form").onsubmit=addHotel;
   $("refresh-employees").onclick=loadEmployees;
+  $("sync-biometric").onclick=syncBiometric;
   $("delete-all-employees").onclick=deleteAllEmployees;
+  $("add-employee").onclick=()=>toggleAddEmployeeForm(true);
+  $("cancel-add-employee").onclick=()=>toggleAddEmployeeForm(false);
+  $("add-employee-form").onsubmit=addEmployee;
   $("import-employees").onclick=()=>$("employees-file").click();
   $("employees-file").onchange=e=>{if(e.target.files[0])importEmployees(e.target.files[0])};
   $("download-attendance").onclick=()=>downloadCsv(state.attendance,"attendance-register.csv");
