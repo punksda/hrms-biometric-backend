@@ -105,6 +105,7 @@
             <input id="employees-file" type="file" accept=".csv" class="hidden">
             <button id="add-employee" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Add Employee</button>
             <button id="import-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Import CSV</button>
+            <button id="download-employee-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
             <button id="refresh-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
             <button id="sync-biometric" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Sync with Biometric</button>
             <button id="delete-all-employees" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete All</button>
@@ -320,6 +321,22 @@ async function deleteAllEmployees(){
     await loadEmployees();await loadHotels();
   }catch(e){toast(errorCopy(e,"Delete all employees"))}
 }
+function downloadEmployeeTemplate(){
+  // EmpName, Cardno, EmpCode, Desig_Name, Branch are required (matches
+  // the Realtime Biometrics export format). Monthly Salary, Date of
+  // Joining, and Property ID are optional — leave them blank or drop
+  // the columns entirely if you don't have that data yet.
+  downloadCsv([{
+    EmpName:"Asha Rao",
+    Cardno:"00000123",
+    EmpCode:"VCOR045",
+    Desig_Name:"Front Desk Executive",
+    Branch:"Hotel Alpine Abode Continental",
+    "Monthly Salary":"25000",
+    "Date of Joining":"2026-01-15",
+    "Property ID":"VCOR045"
+  }],"employee-import-template.csv");
+}
 async function importEmployees(file){
   try{
     const parsed=await parseCsv(file);
@@ -497,6 +514,7 @@ document.addEventListener("DOMContentLoaded",async()=>{
   $("cancel-add-employee").onclick=()=>toggleAddEmployeeForm(false);
   $("add-employee-form").onsubmit=addEmployee;
   $("import-employees").onclick=()=>$("employees-file").click();
+  $("download-employee-template").onclick=downloadEmployeeTemplate;
   $("employees-file").onchange=e=>{if(e.target.files[0])importEmployees(e.target.files[0])};
   $("download-attendance").onclick=()=>downloadCsv(state.attendance,"attendance-register.csv");
   $("upload-roster").onclick=()=>$("duty-roster-file").click();
