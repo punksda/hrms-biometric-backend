@@ -321,6 +321,31 @@ app.post("/api/biometric/attendance", (req, res) => {
       integration.last_sync = new Date().toISOString().slice(0, 19).replace("T", " ");
     }
 
+    // Fully automatic pickup: if this punch's employee_code doesn't match
+    // any known employee yet (by machine_user_id or by id — Realtime's
+    // real-time payload format for this field isn't confirmed, so this
+    // covers both possibilities), create a placeholder employee for them
+    // right now instead of silently dropping the punch. This means every
+    // real punch is captured and attributed from the very first time it's
+    // seen — no CSV, no manual step. You can rename the placeholder and
+    // set their proper hotel later; their attendance history up to that
+    // point is preserved.
+    const code = log.employee_code && String(log.employee_code).trim();
+    if (code) {
+      const known = employees.find(e => String(e.machine_user_id) === code || String(e.id) === code);
+      if (!known) {
+        const hotelFromDevice = log.device_sn ? hotels.find(h => String(h.device_id) === String(log.device_sn)) : null;
+        employees.push({
+          id: code,
+          name: `Unmapped (${code})`,
+          hotel_id: hotelFromDevice ? hotelFromDevice.id : "",
+          role: "",
+          status: "Active",
+          machine_user_id: code
+        });
+      }
+    }
+
     attendanceLogs.push({ ...log, received_at: new Date().toISOString() });
 
     return res.status(200).json({ status: "success", message: "Attendance log synchronized successfully." });
