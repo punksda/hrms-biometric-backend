@@ -105,6 +105,7 @@
             <input id="employees-file" type="file" accept=".csv" class="hidden">
             <button id="import-employees" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Import Employees</button>
             <button id="refresh-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
+            <button id="delete-all-employees" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete All</button>
           </div>
           <div id="employee-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No employee records loaded.</div>
           <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[700px] text-left text-sm">
@@ -269,6 +270,17 @@ function renderEmployees(){
   $("employee-table").innerHTML=rows.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role||"—")}</td><td class="p-3">${esc(r.status||"—")}</td></tr>`).join("");
 }
 async function loadEmployees(){try{const data=await request("/api/employees");state.employees=data.records||[];renderEmployees()}catch(e){toast(errorCopy(e,"Load employees"))}}
+async function deleteAllEmployees(){
+  const count=state.employees.length;
+  if(!count){toast("There are no employees to delete.");return}
+  const typed=prompt(`This permanently deletes all ${count} employee records (their attendance history stays, but becomes unattributed until re-imported or re-matched). Type DELETE to confirm.`);
+  if(typed!=="DELETE"){toast("Cancelled — nothing was deleted.");return}
+  try{
+    const result=await request("/api/employees",{method:"DELETE",body:{confirm:true}});
+    toast(`Deleted ${result.deleted} employee records.`);
+    await loadEmployees();await loadHotels();
+  }catch(e){toast(errorCopy(e,"Delete all employees"))}
+}
 async function importEmployees(file){
   try{
     const parsed=await parseCsv(file);
@@ -409,6 +421,7 @@ document.addEventListener("DOMContentLoaded",async()=>{
   $("cancel-add-hotel").onclick=()=>toggleAddHotelForm(false);
   $("add-hotel-form").onsubmit=addHotel;
   $("refresh-employees").onclick=loadEmployees;
+  $("delete-all-employees").onclick=deleteAllEmployees;
   $("import-employees").onclick=()=>$("employees-file").click();
   $("employees-file").onchange=e=>{if(e.target.files[0])importEmployees(e.target.files[0])};
   $("download-attendance").onclick=()=>downloadCsv(state.attendance,"attendance-register.csv");

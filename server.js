@@ -775,6 +775,25 @@ app.get("/api/employees", async (req, res) => {
   }
 });
 
+// Deletes every employee record. Requires { confirm: true } in the body
+// as a guard against accidental calls. Attendance logs, duty roster
+// entries, and overrides are left untouched — they'll just stop matching
+// anyone until new employee records exist again (the webhook will
+// auto-recreate placeholder employees the next time a punch comes in).
+app.delete("/api/employees", async (req, res) => {
+  try {
+    const confirm = req.body && req.body.confirm === true;
+    if (!confirm) {
+      return res.status(400).json({ status: "error", message: "Pass { confirm: true } to delete all employees. This cannot be undone." });
+    }
+    const r = await pool.query("DELETE FROM employees");
+    res.json({ status: "success", deleted: r.rowCount });
+  } catch (error) {
+    console.error("DELETE /api/employees failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
 // Bulk import/update employees — built to accept rows shaped like the
 // Realtime Biometrics employee export (EmpName, Cardno, EmpCode,
 // Dept_Name, Desig_Name, Branch), but works with any rows using these
