@@ -417,7 +417,7 @@ function ptForSlab(grossP, slabs) {
 }
 // ==== PURE ENGINE END ====
 
-const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent"];
+const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent", "half day", "on duty"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
   to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
   fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code`;
@@ -527,20 +527,22 @@ async function computePayroll(hotelId, month) {
 
   const tallies = {};
   for (const row of attendance) {
-    const t = (tallies[row.employee_id] ??= { present: 0, absent: 0, weekly_off: 0, comp_off: 0, leave: 0, unpaid_leave: 0 });
+    const t = (tallies[row.employee_id] ??= { present: 0, absent: 0, weekly_off: 0, comp_off: 0, half_day: 0, on_duty: 0, leave: 0, unpaid_leave: 0 });
     const s = row.status;
     if (s === "Absent") t.absent++;
     else if (s === "Weekly Off") t.weekly_off++;
     else if (s === "Comp Off") t.comp_off++;
+    else if (s === "Half Day") t.half_day++;      // counts as 0.5 payable day
+    else if (s === "On Duty") t.on_duty++;         // official duty elsewhere — fully paid, tracked separately from Present
     else if (s.indexOf("Present") === 0) t.present++;
     else if (paidByType[s] === false) t.unpaid_leave++;
     else t.leave++;
   }
   return employees.map(emp => {
-    const t = tallies[emp.id] || { present: 0, absent: 0, weekly_off: 0, comp_off: 0, leave: 0, unpaid_leave: 0 };
+    const t = tallies[emp.id] || { present: 0, absent: 0, weekly_off: 0, comp_off: 0, half_day: 0, on_duty: 0, leave: 0, unpaid_leave: 0 };
     const monthlySalary = Number(emp.monthly_salary) || 0;
     const perDay = dim ? monthlySalary / dim : 0;
-    const payable = t.present + t.weekly_off + t.comp_off + t.leave;
+    const payable = t.present + t.weekly_off + t.comp_off + t.on_duty + t.leave + t.half_day * 0.5;
     const gross = Math.round(perDay * payable * 100) / 100;
     const stat = computeStatutory(emp, payable, dim, rates);
     const a = adjBy[emp.id] || { arrear: 0, pf_abry_benefit: 0, other_deductions: 0, advance_recovery: 0, salary_on_hold: false, fnf_amount: null };
@@ -554,7 +556,7 @@ async function computePayroll(hotelId, month) {
       designation: emp.role, bank_name: emp.bank_name || "", bank_account_no: emp.bank_account_no || "", ifsc_code: emp.ifsc_code || "",
       monthly_salary: monthlySalary, fixed_basic_salary: Number(emp.fixed_basic_salary) || 0, days_in_month: dim,
       present_days: t.present, absent_days: t.absent, weekly_off_days: t.weekly_off,
-      comp_off_days: t.comp_off, leave_days: t.leave, unpaid_leave_days: t.unpaid_leave,
+      comp_off_days: t.comp_off, half_days: t.half_day, on_duty_days: t.on_duty, leave_days: t.leave, unpaid_leave_days: t.unpaid_leave,
       payable_days: payable, per_day_rate: Math.round(perDay * 100) / 100,
       gross_pay: gross, basic_pay: Math.round(stat.basic_p * 100) / 100, hra_pay: Math.round(stat.hra_p * 100) / 100,
       pf_applicable: !!emp.pf_applicable, esi_applicable: !!emp.esi_applicable,

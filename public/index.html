@@ -149,45 +149,44 @@
 
       <!-- ATTENDANCE -->
       <section id="attendance" class="tab-view">
-        <p class="text-sm font-semibold text-indigo-600">Time &amp; presence</p>
-        <h2 class="section-title text-3xl font-bold">Attendance Register</h2>
-        <section class="panel mt-6 rounded-2xl bg-white p-5 md:p-6">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 class="font-bold">Daily attendance</h3>
-              <p class="text-xs text-slate-500">Employees run down, dates run across. Each present day shows first in, last out and total duty hours from the device. Click any cell to mark that day.</p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <input id="attendance-file" type="file" accept=".csv" class="hidden">
-              <button id="download-attendance-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
-              <button id="upload-attendance" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Sync with Biometric Data</button>
-              <button id="download-attendance" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
-            </div>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div><p class="text-xs font-semibold text-indigo-600">Time &amp; presence</p><h2 class="section-title text-xl font-bold leading-tight">Attendance Register</h2></div>
+          <div class="flex flex-wrap gap-2">
+            <input id="attendance-file" type="file" accept=".csv" class="hidden">
+            <button id="download-attendance-template" class="rounded-lg border px-2.5 py-1.5 text-xs font-bold">Download Template</button>
+            <button id="upload-attendance" class="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white">Sync with Biometric Data</button>
+            <button id="download-attendance" class="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white">Download CSV</button>
           </div>
-          <p class="mt-2 text-xs text-slate-500">To bulk-fix or backfill punch times: download the template — it's pre-filled with the device punches already on record for this hotel and month — correct or fill in each cell as <code>HH:MM-HH:MM</code> (in time - out time), then upload it. A blank cell removes any previously uploaded punch for that day; it never touches punches the biometric device itself sent.</p>
-          <div class="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
-            <span class="rounded bg-emerald-100 px-2 py-1 text-emerald-800">Present · device confirmed</span>
-            <span class="rounded bg-red-100 px-2 py-1 text-red-800">Present · no punch on the device</span>
-            <span class="rounded bg-red-100 px-2 py-1 text-red-800">Absent</span>
-            <span class="rounded bg-slate-100 px-2 py-1 text-slate-700">Weekly Off</span>
-            <span class="rounded bg-purple-100 px-2 py-1 text-purple-800">Comp Off</span>
-            <span class="rounded bg-sky-100 px-2 py-1 text-sky-800">Leave</span>
-            <span class="rounded px-2 py-1 ring-2 ring-indigo-500">Manually edited</span>
-          </div>
-          <div id="attendance-empty" class="mt-5 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500"></div>
-          <div id="attendance-table-wrap" class="table-scroll mt-5 hidden" style="max-height:72vh"><table class="sheet w-full text-left text-sm">
-            <thead id="attendance-table-head" class="text-xs uppercase text-slate-500"></thead>
-            <tbody id="attendance-table"></tbody>
-          </table></div>
-          <div class="mt-5 border-t pt-4">
-            <details><summary class="cursor-pointer text-sm font-bold text-slate-700">Import a Realtime "Download Attendance" file for one day</summary>
-              <div class="mt-3 flex flex-wrap items-end gap-3">
-                <div><label class="mb-1 block text-xs font-semibold text-slate-600">Date the file covers</label><input id="daily-attendance-date" type="date" class="rounded-lg border p-2 text-sm"></div>
-                <input id="daily-attendance-file" type="file" accept=".csv" class="hidden">
-                <button id="import-daily-attendance" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Choose CSV &amp; import</button>
+        </div>
+        <section class="panel mt-2 flex flex-col rounded-2xl bg-white p-3" id="attendance-panel">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap gap-1.5 text-[10px] font-semibold">
+              <span class="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-800"><b>P</b> confirmed</span>
+              <span class="rounded bg-red-100 px-1.5 py-0.5 text-red-800"><b>P</b> no punch</span>
+              <span class="rounded bg-red-100 px-1.5 py-0.5 text-red-800"><b>A</b> Absent</span>
+              <span class="rounded bg-slate-100 px-1.5 py-0.5 text-slate-700"><b>W/O</b> Weekly Off</span>
+              <span class="rounded bg-purple-100 px-1.5 py-0.5 text-purple-800"><b>C.OFF</b> Comp Off</span>
+              <span class="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800"><b>H/D</b> Half Day</span>
+              <span class="rounded bg-teal-100 px-1.5 py-0.5 text-teal-800"><b>O.D.</b> On Duty</span>
+              <span class="rounded bg-sky-100 px-1.5 py-0.5 text-sky-800">Leave (code shown)</span>
+              <span class="rounded px-1.5 py-0.5 ring-2 ring-indigo-500">Manually edited</span>
+            </div>
+            <details class="text-[11px] text-slate-500"><summary class="cursor-pointer font-semibold">Bulk-fix punches / import a daily file</summary>
+              <div class="mt-2 max-w-md">
+                <p>Download the template — pre-filled with this hotel's device punches for the month — edit any cell as <code>HH:MM-HH:MM</code>, then upload with "Sync with Biometric Data". A blank cell removes that day's uploaded punch only; it never touches what the device itself sent.</p>
+                <div class="mt-2 flex flex-wrap items-end gap-2">
+                  <div><label class="mb-1 block text-[10px] font-semibold text-slate-600">Date the file covers</label><input id="daily-attendance-date" type="date" class="rounded-lg border p-1.5 text-xs"></div>
+                  <input id="daily-attendance-file" type="file" accept=".csv" class="hidden">
+                  <button id="import-daily-attendance" class="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700">Choose CSV &amp; import</button>
+                </div>
               </div>
             </details>
           </div>
+          <div id="attendance-empty" class="mt-3 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500"></div>
+          <div id="attendance-table-wrap" class="table-scroll mt-3 hidden flex-1"><table class="sheet w-full text-left text-sm">
+            <thead id="attendance-table-head" class="text-xs uppercase text-slate-500"></thead>
+            <tbody id="attendance-table"></tbody>
+          </table></div>
         </section>
       </section>
 
@@ -539,19 +538,25 @@ function toneClass(status, punches) {
   if (status === "Absent") return "bg-red-100 text-red-800";
   if (status === "Weekly Off") return "bg-slate-100 text-slate-700";
   if (status === "Comp Off") return "bg-purple-100 text-purple-800";
+  if (status === "Half Day") return "bg-amber-100 text-amber-800";
+  if (status === "On Duty") return "bg-teal-100 text-teal-800";
   if (isLeave(status)) return "bg-sky-100 text-sky-800";
   if (status.indexOf("Present") === 0) return punches > 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"; // no punch on the device = red
   return "bg-white text-slate-500";
 }
+// Short label for a compact cell: leave/base-status codes so a whole month
+// of columns can be scanned at a glance without wrapping.
+const STATUS_SHORT = { "Present": "P", "Absent": "A", "Weekly Off": "W/O", "Comp Off": "C.OFF", "Half Day": "H/D", "On Duty": "O.D.",
+  "Present (Incomplete)": "P*", "Present (Worked Weekly Off)": "P(WO)" };
+function shortLabel(s) { return STATUS_SHORT[s] || leaveCode(s) || s; }
 function cellHtml(r, id, date) {
   const s = r.status, present = s.indexOf("Present") === 0;
   let extra = "";
   if (present) {
     const hours = r.duty_minutes != null ? fmtHM(r.duty_minutes) : (r.punches ? "no check-out" : "no punch on device");
-    extra = `<span class="block text-[11px] font-normal">${esc(r.in_time || "—")} → ${esc(r.out_time || "—")}</span><span class="block text-[11px] font-semibold">${esc(hours)}</span>`;
+    extra = `<span class="block text-[9px] font-normal leading-tight">${esc(r.in_time || "—")}→${esc(r.out_time || "—")}</span><span class="block text-[9px] font-semibold leading-tight">${esc(hours)}</span>`;
   }
-  const label = leaveCode(s) || s;
-  return `<td class="border-l"><button type="button" title="${esc(s)}" class="attendance-cell min-h-[52px] w-full p-2 text-left text-xs font-semibold ${toneClass(s, r.punches)} ${r.overridden ? "ring-2 ring-inset ring-indigo-500" : ""}" data-employee="${esc(id)}" data-date="${date}">${esc(label)}${extra}</button></td>`;
+  return `<td class="border-l p-0"><button type="button" title="${esc(s)}" class="attendance-cell block h-full min-h-[40px] w-full p-1.5 text-left text-[11px] font-semibold leading-tight ${toneClass(s, r.punches)} ${r.overridden ? "ring-2 ring-inset ring-indigo-500" : ""}" data-employee="${esc(id)}" data-date="${date}">${esc(shortLabel(s))}${extra}</button></td>`;
 }
 let attendanceIndex = new Map();
 function renderAttendance() {
@@ -562,20 +567,30 @@ function renderAttendance() {
   attendanceIndex = new Map(state.attendance.map(r => [`${r.employee_id}|${r.date}`, r]));
   const emps = [...new Map(state.attendance.map(r => [r.employee_id, r.employee_name])).entries()].sort((a, b) => natural(a[0], b[0]));
   const dates = monthDates(selectedMonth());
-  $("attendance-table-head").innerHTML = `<tr><th class="sticky-col min-w-[170px] bg-slate-50 p-3">Employee</th>${dates.map(date => { const d = new Date(date + "T00:00:00"); return `<th class="min-w-[150px] border-l p-3">${date.slice(8)} <span class="block font-normal normal-case text-slate-500">${d.toLocaleDateString("en-GB", { weekday: "short" })}</span></th>`; }).join("")}</tr>`;
+  $("attendance-table-head").innerHTML = `<tr><th class="sticky-col min-w-[120px] bg-slate-50 p-1.5">Employee</th>${dates.map(date => { const d = new Date(date + "T00:00:00"); return `<th class="min-w-[64px] border-l p-1.5">${date.slice(8)}<span class="block font-normal normal-case text-slate-500">${d.toLocaleDateString("en-GB", { weekday: "short" }).slice(0, 2)}</span></th>`; }).join("")}</tr>`;
   $("attendance-table").innerHTML = emps.map(([id, name]) => {
-    const cells = dates.map(date => { const r = attendanceIndex.get(`${id}|${date}`); return r ? cellHtml(r, id, date) : `<td class="border-l p-2 text-center text-slate-300">·</td>`; }).join("");
-    return `<tr class="border-t"><th class="sticky-col whitespace-nowrap bg-white p-3 font-semibold">${esc(id)} <span class="block text-xs font-normal text-slate-500">${esc(name)}</span></th>${cells}</tr>`;
+    const cells = dates.map(date => { const r = attendanceIndex.get(`${id}|${date}`); return r ? cellHtml(r, id, date) : `<td class="border-l p-1 text-center text-slate-300">·</td>`; }).join("");
+    return `<tr class="border-t"><th class="sticky-col whitespace-nowrap bg-white p-1.5 text-left font-semibold">${esc(id)}<span class="block text-[10px] font-normal text-slate-500">${esc(name)}</span></th>${cells}</tr>`;
   }).join("");
   document.querySelectorAll(".attendance-cell").forEach(cell => cell.onclick = () => openPicker(cell));
+  fitToViewport(wrap);
+}
+// Sizes a scrollable table wrapper to exactly fill the rest of the visible
+// screen below it, so the page itself never needs scrolling to reach or
+// pass the table — any further overflow (e.g. more dates than fit width-wise)
+// scrolls inside the table area only, not the page.
+function fitToViewport(wrap) {
+  const setHeight = () => { wrap.style.maxHeight = Math.max(240, window.innerHeight - wrap.getBoundingClientRect().top - 16) + "px"; };
+  setHeight();
+  if (!wrap.dataset.fitBound) { window.addEventListener("resize", () => { if (!wrap.classList.contains("hidden")) setHeight(); }); wrap.dataset.fitBound = "1"; }
 }
 function closePickers() { document.querySelectorAll(".attendance-picker").forEach(x => x.remove()); }
 function openPicker(cell) {
   closePickers();
-  const options = ["Present", "Absent", "Weekly Off", "Comp Off", "Present (Worked Weekly Off)", ...state.leaveTypes.map(t => t.name)];
+  const options = ["Present", "Absent", "Weekly Off", "Comp Off", "Present (Worked Weekly Off)", "Half Day", "On Duty", ...state.leaveTypes.map(t => t.name)];
   const picker = document.createElement("div");
   picker.className = "attendance-picker fixed z-[80] max-h-80 min-w-[200px] overflow-auto rounded-lg border bg-white p-2 text-sm shadow-xl";
-  picker.innerHTML = options.map(s => `<button type="button" class="block w-full rounded px-2 py-1.5 text-left hover:bg-indigo-50" data-status="${esc(s)}">${esc(s)}${leaveCode(s) ? ` <span class="text-xs text-slate-500">(${esc(leaveCode(s))})</span>` : ""}</button>`).join("")
+  picker.innerHTML = options.map(s => `<button type="button" class="block w-full rounded px-2 py-1.5 text-left hover:bg-indigo-50" data-status="${esc(s)}"><span class="font-bold">${esc(shortLabel(s))}</span> <span class="text-xs text-slate-500">${esc(s)}</span></button>`).join("")
     + `<button type="button" class="mt-1 block w-full border-t px-2 pt-2 text-left text-xs text-slate-500" data-status="">Reset to what the device shows</button>`;
   document.body.appendChild(picker);
   const rect = cell.getBoundingClientRect();
