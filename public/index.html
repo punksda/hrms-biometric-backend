@@ -120,18 +120,28 @@
               <div><label class="mb-1 block text-sm font-semibold">Employee Code</label><input id="new-emp-id" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. VCOR045"></div>
               <div><label class="mb-1 block text-sm font-semibold">Name</label><input id="new-emp-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Hotel</label><select id="new-emp-hotel" class="w-full rounded-lg border p-2.5 text-sm"><option value="">Select hotel</option></select></div>
-              <div><label class="mb-1 block text-sm font-semibold">Role</label><input id="new-emp-role" class="w-full rounded-lg border p-2.5 text-sm"></div>
-              <div><label class="mb-1 block text-sm font-semibold">Monthly Salary</label><input id="new-emp-salary" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Designation</label><input id="new-emp-role" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Date of Joining</label><input id="new-emp-doj" type="date" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Card No / Device User ID <span class="font-normal text-slate-500">(numbers only — the biometric machine's own ID)</span></label><input id="new-emp-card" inputmode="numeric" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Property Identifier <span class="font-normal text-slate-500">(optional label, e.g. VCOR001)</span></label><input id="new-emp-property-code" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div class="md:col-span-3 mt-1 border-t border-indigo-100 pt-3 text-xs font-bold uppercase tracking-wide text-indigo-600">Salary</div>
+              <div><label class="mb-1 block text-sm font-semibold">Gross Salary <span class="font-normal text-slate-500">(per month)</span></label><input id="new-emp-salary" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Fixed Basic Salary <span class="font-normal text-slate-500">(PF/ESI are calculated on this)</span></label><input id="new-emp-basic" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div class="flex items-end gap-4 pb-1">
+                <label class="flex items-center gap-2 text-sm font-semibold"><input id="new-emp-pf" type="checkbox" checked class="h-4 w-4 rounded border-slate-300">PF applicable</label>
+                <label class="flex items-center gap-2 text-sm font-semibold"><input id="new-emp-esi" type="checkbox" checked class="h-4 w-4 rounded border-slate-300">ESI applicable</label>
+              </div>
+              <div class="md:col-span-3 mt-1 border-t border-indigo-100 pt-3 text-xs font-bold uppercase tracking-wide text-indigo-600">Bank details</div>
+              <div><label class="mb-1 block text-sm font-semibold">Bank Name</label><input id="new-emp-bank-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Bank Account No.</label><input id="new-emp-bank-account" inputmode="numeric" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">IFSC Code</label><input id="new-emp-ifsc" class="w-full rounded-lg border p-2.5 text-sm uppercase" maxlength="11" placeholder="e.g. SBIN0001234"></div>
             </div>
             <p id="add-employee-error" class="mt-3 hidden text-sm text-red-700"></p>
             <div class="mt-4 flex gap-2"><button id="submit-add-employee" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Save employee</button><button id="cancel-add-employee" type="button" class="rounded-lg border bg-white px-4 py-2.5 text-sm font-bold">Cancel</button></div>
           </form>
           <div id="employee-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No employee records loaded.</div>
-          <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[860px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee Code</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Role</th><th class="p-3">Card No</th><th class="p-3">Monthly Salary</th><th class="p-3">Date of Joining</th><th class="p-3">Status</th></tr></thead>
+          <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[1100px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee Code</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Designation</th><th class="p-3">Card No</th><th class="p-3">Gross Salary</th><th class="p-3">Basic Salary</th><th class="p-3">PF/ESI</th><th class="p-3">Bank Details</th><th class="p-3">Date of Joining</th><th class="p-3">Status</th></tr></thead>
             <tbody id="employee-table"></tbody>
           </table></div>
         </section>
@@ -147,8 +157,14 @@
               <h3 class="font-bold">Daily attendance</h3>
               <p class="text-xs text-slate-500">Employees run down, dates run across. Each present day shows first in, last out and total duty hours from the device. Click any cell to mark that day.</p>
             </div>
-            <button id="download-attendance" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+            <div class="flex flex-wrap gap-2">
+              <input id="attendance-file" type="file" accept=".csv" class="hidden">
+              <button id="download-attendance-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
+              <button id="upload-attendance" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Sync with Biometric Data</button>
+              <button id="download-attendance" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+            </div>
           </div>
+          <p class="mt-2 text-xs text-slate-500">To bulk-fix or backfill punch times: download the template — it's pre-filled with the device punches already on record for this hotel and month — correct or fill in each cell as <code>HH:MM-HH:MM</code> (in time - out time), then upload it. A blank cell removes any previously uploaded punch for that day; it never touches punches the biometric device itself sent.</p>
           <div class="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
             <span class="rounded bg-emerald-100 px-2 py-1 text-emerald-800">Present · device confirmed</span>
             <span class="rounded bg-red-100 px-2 py-1 text-red-800">Present · no punch on the device</span>
@@ -252,12 +268,19 @@
         <h2 class="section-title text-3xl font-bold">Payroll</h2>
         <section class="panel mt-6 rounded-2xl bg-white p-5">
           <div class="flex flex-wrap items-start justify-between gap-3">
-            <p class="max-w-3xl text-sm text-slate-600">Pay = monthly salary ÷ days in the month × paid days. Present, Weekly Off, Comp Off and paid leave are paid; Absent and unpaid leave are not. Days before someone's joining date aren't counted, so a mid-month joiner is pro-rated.</p>
+            <p class="max-w-3xl text-sm text-slate-600">Gross pay = Gross Salary ÷ days in the month × payable days. PF and ESI are calculated on Fixed Basic Salary, only for employees flagged applicable — PF rounds to the nearest rupee, ESI always rounds up. Professional Tax follows the current West Bengal slab. CTC = Gross Pay + Employer PF + Employer ESI. Arrear, other deductions and advance recovery are editable per employee per month.</p>
             <button id="download-payroll" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
           </div>
           <div id="payroll-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No payroll records loaded.</div>
-          <div id="payroll-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[1080px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Monthly Salary</th><th class="p-3">Present</th><th class="p-3">Absent</th><th class="p-3">Weekly Off</th><th class="p-3">Comp Off</th><th class="p-3">Leave</th><th class="p-3">Payable Days</th><th class="p-3">Per-Day Rate</th><th class="p-3">Gross Pay</th></tr></thead>
+          <div id="payroll-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[1900px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr>
+              <th class="p-3">Employee</th><th class="p-3">Bank Details</th><th class="p-3">Gross Salary</th><th class="p-3">Basic Salary</th>
+              <th class="p-3">Present</th><th class="p-3">Absent</th><th class="p-3">Weekly Off</th><th class="p-3">Comp Off</th><th class="p-3">Leave</th>
+              <th class="p-3">Payable Days</th><th class="p-3">Gross Pay</th>
+              <th class="p-3">PF (Emp.)</th><th class="p-3">PF (Employer)</th><th class="p-3">ESI (Emp.)</th><th class="p-3">ESI (Employer)</th><th class="p-3">Prof. Tax</th>
+              <th class="p-3">Arrear</th><th class="p-3">Other Ded.</th><th class="p-3">Advance Rec.</th><th class="p-3">On Hold</th>
+              <th class="p-3">CTC</th><th class="p-3">Net Take Home</th>
+            </tr></thead>
             <tbody id="payroll-table"></tbody>
           </table></div>
         </section>
@@ -438,19 +461,30 @@ function renderEmployees() {
   const rows = scopeEmployees(), empty = $("employee-empty"), wrap = $("employee-table-wrap");
   if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
   empty.classList.add("hidden"); wrap.classList.remove("hidden");
-  $("employee-table").innerHTML = rows.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${esc(r.status || "—")}</td></tr>`).join("");
+  $("employee-table").innerHTML = rows.map(r => {
+    const bank = r.bank_name || r.bank_account_no ? `${esc(r.bank_name || "—")}<span class="block text-xs font-normal text-slate-500">${esc(r.bank_account_no || "")} ${esc(r.ifsc_code || "")}</span>` : "—";
+    const pfEsi = `${r.pf_applicable ? "PF" : ""}${r.pf_applicable && r.esi_applicable ? " · " : ""}${r.esi_applicable ? "ESI" : ""}` || "—";
+    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${Number(r.fixed_basic_salary) ? Number(r.fixed_basic_salary).toLocaleString() : "—"}</td><td class="p-3">${pfEsi}</td><td class="p-3">${bank}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${esc(r.status || "—")}</td></tr>`;
+  }).join("");
 }
 async function loadEmployees() { try { const data = await request("/api/employees"); state.employees = data.records || []; renderEmployees(); } catch (e) { toast(errorCopy(e, "Load employees")); } }
-function toggleAddEmployeeForm(open) { const f = $("add-employee-form"); f.classList.toggle("hidden", !open); if (!open) { f.reset(); $("add-employee-error").classList.add("hidden"); } }
+function toggleAddEmployeeForm(open) { const f = $("add-employee-form"); f.classList.toggle("hidden", !open); if (!open) { f.reset(); $("new-emp-pf").checked = true; $("new-emp-esi").checked = true; $("add-employee-error").classList.add("hidden"); } }
 async function addEmployee(ev) {
   ev.preventDefault();
-  const id = $("new-emp-id").value.trim(), name = $("new-emp-name").value.trim(), cardNo = $("new-emp-card").value.trim(), err = $("add-employee-error"), btn = $("submit-add-employee");
+  const id = $("new-emp-id").value.trim(), name = $("new-emp-name").value.trim(), cardNo = $("new-emp-card").value.trim();
+  const acctNo = $("new-emp-bank-account").value.trim(), ifsc = $("new-emp-ifsc").value.trim();
+  const err = $("add-employee-error"), btn = $("submit-add-employee");
   if (!id || !name) { err.textContent = "Employee Code and Name are required."; err.classList.remove("hidden"); return; }
   if (cardNo && !/^\d+$/.test(cardNo)) { err.textContent = "Card No / Device User ID must be numbers only — that's a limit of the biometric machine itself."; err.classList.remove("hidden"); return; }
+  if (acctNo && !/^\d+$/.test(acctNo)) { err.textContent = "Bank Account No. must be numbers only."; err.classList.remove("hidden"); return; }
+  if (ifsc && !/^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(ifsc)) { err.textContent = "IFSC Code doesn't look right — it should be 11 characters, e.g. SBIN0001234."; err.classList.remove("hidden"); return; }
   err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
   try {
     await request("/api/employees", { method: "POST", body: { id, name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(),
-      monthly_salary: $("new-emp-salary").value || 0, date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim() } });
+      monthly_salary: $("new-emp-salary").value || 0, fixed_basic_salary: $("new-emp-basic").value || 0,
+      pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked,
+      date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim(),
+      bank_name: $("new-emp-bank-name").value.trim(), bank_account_no: acctNo, ifsc_code: ifsc } });
     toast(`Employee ${name} added.`); toggleAddEmployeeForm(false); await loadEmployees(); await loadHotels();
   } catch (e) { err.textContent = e.message || errorCopy(e, "Add employee"); err.classList.remove("hidden"); }
   finally { btn.disabled = false; btn.textContent = "Save employee"; }
@@ -465,7 +499,9 @@ async function deleteAllEmployees() {
 }
 function downloadEmployeeTemplate() {
   downloadCsv([{ EmpName: "Asha Rao", Cardno: "00000123", EmpCode: "VCOR045", Desig_Name: "Front Desk Executive", Branch: "Hotel Alpine Abode Continental",
-    "Monthly Salary": "25000", "Date of Joining": "2026-01-15", "Property ID": "VCOR045" }], "employee-import-template.csv");
+    "Date of Joining": "2026-01-15", "Property ID": "VCOR045",
+    "Gross Salary": "12000", "Fixed Basic Salary": "10558", "PF Applicable": "Yes", "ESI Applicable": "Yes",
+    "Bank Name": "State Bank of India", "Bank Account No.": "000000000000", "IFSC Code": "SBIN0001234" }], "employee-import-template.csv");
 }
 async function importEmployees(file) {
   try {
@@ -474,7 +510,10 @@ async function importEmployees(file) {
       id: findCol(fields, ["empcode", "employeecode", "employeeid", "empid", "id"]), name: findCol(fields, NAME_ALIASES),
       card: findCol(fields, ["cardno", "cardnumber", "deviceuserid", "machineuserid", "userid"]),
       role: findCol(fields, ["designame", "designation", "role", "position"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
-      salary: findCol(fields, ["monthlysalary", "salary"]), doj: findCol(fields, ["dateofjoining", "doj", "joiningdate"]), prop: findCol(fields, ["propertyid", "propertycode"]) };
+      salary: findCol(fields, ["grosssalary", "monthlysalary", "salary"]), basic: findCol(fields, ["fixedbasicsalary", "basicsalary", "basic"]),
+      pf: findCol(fields, ["pfapplicable", "pf"]), esi: findCol(fields, ["esiapplicable", "esi"]),
+      doj: findCol(fields, ["dateofjoining", "doj", "joiningdate"]), prop: findCol(fields, ["propertyid", "propertycode"]),
+      bankName: findCol(fields, ["bankname"]), bankAcct: findCol(fields, ["bankaccountno", "bankaccountnumber", "accountno"]), ifsc: findCol(fields, ["ifsccode", "ifsc"]) };
     if (!c.id || !c.name) throw new Error("The CSV needs at least an EmpCode and an EmpName column. Use “Download Template” for the layout.");
     const bad = c.card ? data.filter(r => r[c.card] && !/^\d+$/.test(r[c.card])).length : 0;
     const rows = data.filter(r => r[c.id]).map(r => ({
@@ -482,7 +521,10 @@ async function importEmployees(file) {
       machine_user_id: c.card && /^\d+$/.test(r[c.card] || "") ? r[c.card] : "",
       role: c.role ? r[c.role] : "", hotel_id: c.hotel ? r[c.hotel] : "",
       monthly_salary: c.salary ? r[c.salary].replace(/,/g, "") : undefined, date_of_joining: c.doj ? headerToIsoDate(r[c.doj], new Date().getFullYear()) || r[c.doj] : undefined,
-      property_code: c.prop ? r[c.prop] : undefined }));
+      property_code: c.prop ? r[c.prop] : undefined,
+      fixed_basic_salary: c.basic ? r[c.basic].replace(/,/g, "") : undefined,
+      pf_applicable: c.pf ? r[c.pf] : undefined, esi_applicable: c.esi ? r[c.esi] : undefined,
+      bank_name: c.bankName ? r[c.bankName] : undefined, bank_account_no: c.bankAcct ? r[c.bankAcct] : undefined, ifsc_code: c.ifsc ? r[c.ifsc] : undefined }));
     if (!rows.length) throw new Error("No employee rows found in that file.");
     const r = await request("/api/employees/import", { method: "POST", body: { rows } });
     toast(`Imported: ${r.created} added, ${r.updated} updated${bad ? `. ${bad} Card No value(s) contained letters and were skipped` : ""}.`);
@@ -555,6 +597,58 @@ function exportAttendance() {
   downloadCsv(state.attendance.map(r => ({ employee_code: r.employee_id, employee_name: r.employee_name, date: r.date, status: r.status,
     in_time: r.in_time || "", out_time: r.out_time || "", duty_hours: r.duty_minutes != null ? (r.duty_minutes / 60).toFixed(2) : "",
     device_punches: r.punches, shift: r.shift || "", manually_edited: r.overridden ? "Yes" : "No" })), `attendance-${selectedMonth()}.csv`);
+}
+// Template mirrors the register itself: one column per date, pre-filled with
+// whatever punch times are already on record, so filling gaps or correcting
+// a mistake means editing just the cells that need it.
+function downloadAttendanceTemplate() {
+  if (state.selectedHotel === "all") { toast("Choose one hotel in the header first — the template is built for one hotel and month at a time."); return; }
+  const emps = scopeEmployees();
+  if (!emps.length) { toast("Add employees first — the template is built from them."); return; }
+  const dates = monthDates(selectedMonth());
+  const rows = emps.map(e => {
+    const o = { employee_id: e.id, employee_name: e.name };
+    dates.forEach(d => { const r = attendanceIndex.get(`${e.id}|${d}`); o[d] = r && r.in_time ? `${r.in_time}-${r.out_time || ""}` : ""; });
+    return o;
+  });
+  const h = state.hotels.find(h => String(h.id) === state.selectedHotel);
+  downloadCsv(rows, `attendance-register-${h ? h.code || h.id : "hotel"}-${selectedMonth()}.csv`);
+  toast('Template downloaded. Each cell is "IN-OUT" (e.g. 09:00-18:00) — edit or fill in times, leave a cell blank for no punch, then upload it.');
+}
+// Accepts "09:00-18:00", "9:00 - 18:00", "09:00:00-18:00:00", or a single
+// time with no out-punch ("09:00"). Anything else is left unparsed.
+function parseTimeRangeCell(value) {
+  const t = String(value ?? "").trim();
+  if (!t) return { blank: true };
+  const timeRe = "([01]?\\d|2[0-3]):([0-5]\\d)(?::[0-5]\\d)?";
+  let m = t.match(new RegExp(`^${timeRe}\\s*(?:-|to|–|—)\\s*${timeRe}$`, "i"));
+  if (m) return { in_time: `${m[1].padStart(2, "0")}:${m[2]}`, out_time: `${m[3].padStart(2, "0")}:${m[4]}` };
+  m = t.match(new RegExp(`^${timeRe}$`));
+  if (m) return { in_time: `${m[1].padStart(2, "0")}:${m[2]}`, out_time: "" };
+  return { invalid: true };
+}
+async function uploadAttendanceRegister(file) {
+  try {
+    const { fields, data } = await readCsvFile(file);
+    const idCol = findCol(fields, ID_ALIASES);
+    if (!idCol) throw new Error("No employee code column found. Use “Download Template” for the layout.");
+    const year = Number(selectedMonth().slice(0, 4));
+    const dateCols = fields.map(f => ({ f, d: headerToIsoDate(f, year) })).filter(x => x.d);
+    if (!dateCols.length) throw new Error("Couldn't find date columns. Use “Download Template” — it has one column per date already.");
+    const rows = []; let invalid = 0;
+    data.filter(r => r[idCol]).forEach(r => dateCols.forEach(({ f, d }) => {
+      const parsed = parseTimeRangeCell(r[f]);
+      if (parsed.invalid) { invalid++; return; }
+      if (parsed.blank) { rows.push({ employee_id: r[idCol], date: d, in_time: "", out_time: "" }); return; }
+      rows.push({ employee_id: r[idCol], date: d, in_time: parsed.in_time, out_time: parsed.out_time });
+    }));
+    if (!rows.length) throw new Error("No rows found in that file.");
+    const resp = await request("/api/attendance/bulk-import", { method: "POST", body: { rows }, timeout: 180000 });
+    let msg = `Synced: ${resp.punches_saved} punches saved across ${resp.days_covered} employee-days.`;
+    if (invalid || resp.bad_times) msg += ` ${invalid + (resp.bad_times || 0)} cell(s) weren't a valid time (expected HH:MM or HH:MM-HH:MM) and were skipped.`;
+    toast(msg);
+    await loadAttendance();
+  } catch (e) { toast(e.message || errorCopy(e, "Sync attendance")); } finally { $("attendance-file").value = ""; }
 }
 async function importDailyAttendance(file) {
   const date = $("daily-attendance-date").value;
@@ -711,17 +805,52 @@ async function uploadBalances(file) {
 }
 
 /* ---------- payroll ---------- */
+function payrollRow(r) {
+  const bank = r.bank_name || r.bank_account_no ? `${esc(r.bank_name || "—")}<span class="block text-[11px] font-normal text-slate-500">${esc(r.bank_account_no || "")} ${esc(r.ifsc_code || "")}</span>` : "—";
+  const num = (cls, val, extra) => `<input type="number" step="0.01" class="${cls} w-24 rounded border p-1.5 text-sm" data-employee="${esc(r.employee_id)}" value="${val}" ${extra || ""}>`;
+  return `<tr class="border-t">
+    <td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></td>
+    <td class="p-3 text-xs">${bank}</td>
+    <td class="p-3">${num("salary-input", r.monthly_salary)}</td>
+    <td class="p-3">${num("basic-input", r.fixed_basic_salary)}</td>
+    <td class="p-3">${r.present_days}</td><td class="p-3">${r.absent_days}</td><td class="p-3">${r.weekly_off_days}</td><td class="p-3">${r.comp_off_days}</td>
+    <td class="p-3">${r.leave_days}${r.unpaid_leave_days ? `<span class="block text-[11px] text-slate-500">+${r.unpaid_leave_days} unpaid</span>` : ""}</td>
+    <td class="p-3 font-semibold">${r.payable_days}</td>
+    <td class="p-3 font-semibold">${fmtNum(r.gross_pay)}</td>
+    <td class="p-3">${r.pf_applicable ? fmtNum(r.pf_employee) : "—"}</td><td class="p-3">${r.pf_applicable ? fmtNum(r.pf_employer) : "—"}</td>
+    <td class="p-3">${r.esi_applicable ? fmtNum(r.esi_employee) : "—"}</td><td class="p-3">${r.esi_applicable ? fmtNum(r.esi_employer) : "—"}</td>
+    <td class="p-3">${fmtNum(r.professional_tax)}</td>
+    <td class="p-3">${num("adj-input", r.arrear, 'data-field="arrear"')}</td>
+    <td class="p-3">${num("adj-input", r.other_deductions, 'data-field="other_deductions"')}</td>
+    <td class="p-3">${num("adj-input", r.advance_recovery, 'data-field="advance_recovery"')}</td>
+    <td class="p-3 text-center"><input type="checkbox" class="hold-input h-4 w-4 rounded border-slate-300" data-employee="${esc(r.employee_id)}" ${r.salary_on_hold ? "checked" : ""}></td>
+    <td class="p-3 font-semibold">${fmtNum(r.ctc)}</td>
+    <td class="p-3 font-bold text-emerald-700">${r.salary_on_hold ? `<span class="text-red-700">On hold</span>` : (r.fnf_amount !== null ? `${fmtNum(r.net_pay)}<span class="block text-[11px] font-normal text-slate-500">FNF</span>` : fmtNum(r.net_pay))}</td>
+  </tr>`;
+}
 function renderPayroll() {
   const empty = $("payroll-empty"), wrap = $("payroll-table-wrap");
   if (!state.payroll.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
   empty.classList.add("hidden"); wrap.classList.remove("hidden");
-  $("payroll-table").innerHTML = state.payroll.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></td><td class="p-3"><input type="number" min="0" step="0.01" class="salary-input w-28 rounded border p-1.5 text-sm" data-employee="${esc(r.employee_id)}" value="${r.monthly_salary}"></td><td class="p-3">${r.present_days}</td><td class="p-3">${r.absent_days}</td><td class="p-3">${r.weekly_off_days}</td><td class="p-3">${r.comp_off_days}</td><td class="p-3">${r.leave_days}${r.unpaid_leave_days ? `<span class="block text-[11px] text-slate-500">+${r.unpaid_leave_days} unpaid</span>` : ""}</td><td class="p-3 font-semibold">${r.payable_days}</td><td class="p-3">${fmtNum(r.per_day_rate)}</td><td class="p-3 font-bold text-emerald-700">${fmtNum(r.gross_pay)}</td></tr>`).join("");
+  $("payroll-table").innerHTML = state.payroll.map(payrollRow).join("");
   document.querySelectorAll(".salary-input").forEach(input => input.addEventListener("change", async () => {
     const value = Number(input.value);
-    if (isNaN(value) || value < 0) { toast("Salary must be a number, 0 or more."); return; }
-    try { await request(`/api/employees/${enc(input.dataset.employee)}/salary`, { method: "POST", body: { monthly_salary: value } }); toast("Salary updated."); await loadPayroll(); await loadEmployees(); }
+    if (isNaN(value) || value < 0) { toast("Gross Salary must be a number, 0 or more."); return; }
+    try { await request(`/api/employees/${enc(input.dataset.employee)}/salary`, { method: "POST", body: { monthly_salary: value } }); toast("Gross Salary updated."); await loadPayroll(); await loadEmployees(); }
     catch (e) { toast(errorCopy(e, "Update salary")); }
   }));
+  document.querySelectorAll(".basic-input").forEach(input => input.addEventListener("change", async () => {
+    const value = Number(input.value);
+    if (isNaN(value) || value < 0) { toast("Fixed Basic Salary must be a number, 0 or more."); return; }
+    try { await request(`/api/employees/${enc(input.dataset.employee)}`, { method: "PATCH", body: { fixed_basic_salary: value } }); toast("Fixed Basic Salary updated — PF/ESI recalculated."); await loadPayroll(); await loadEmployees(); }
+    catch (e) { toast(errorCopy(e, "Update basic salary")); }
+  }));
+  document.querySelectorAll(".adj-input").forEach(input => input.addEventListener("change", () => saveAdjustment(input.dataset.employee, { [input.dataset.field]: input.value === "" ? 0 : Number(input.value) })));
+  document.querySelectorAll(".hold-input").forEach(input => input.addEventListener("change", () => saveAdjustment(input.dataset.employee, { salary_on_hold: input.checked })));
+}
+async function saveAdjustment(employeeId, fields) {
+  try { await request("/api/payroll/adjustments", { method: "POST", body: { employee_id: employeeId, month: selectedMonth(), ...fields } }); toast("Payroll adjustment saved."); await loadPayroll(); }
+  catch (e) { toast(errorCopy(e, "Save adjustment")); }
 }
 async function loadPayroll() {
   try { const data = await request(`/api/payroll?hotel_id=${enc(state.selectedHotel)}&month=${enc(selectedMonth())}`); state.payroll = data.records || []; renderPayroll(); }
@@ -795,6 +924,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("download-employee-template").onclick = downloadEmployeeTemplate;
 
   $("download-attendance").onclick = exportAttendance;
+  $("download-attendance-template").onclick = downloadAttendanceTemplate;
+  $("upload-attendance").onclick = () => $("attendance-file").click(); $("attendance-file").onchange = e => { if (e.target.files[0]) uploadAttendanceRegister(e.target.files[0]); };
   $("import-daily-attendance").onclick = () => $("daily-attendance-file").click(); $("daily-attendance-file").onchange = e => { if (e.target.files[0]) importDailyAttendance(e.target.files[0]); };
 
   $("download-roster-template").onclick = downloadRosterTemplate;
@@ -807,9 +938,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("upload-balances").onclick = () => $("balance-file").click(); $("balance-file").onchange = e => { if (e.target.files[0]) uploadBalances(e.target.files[0]); };
   $("download-leaves").onclick = exportLeaves;
 
-  $("download-payroll").onclick = () => downloadCsv(state.payroll.map(r => ({ employee_code: r.employee_id, employee_name: r.employee_name, monthly_salary: r.monthly_salary, days_in_month: r.days_in_month,
-    present_days: r.present_days, absent_days: r.absent_days, weekly_off_days: r.weekly_off_days, comp_off_days: r.comp_off_days, paid_leave_days: r.leave_days, unpaid_leave_days: r.unpaid_leave_days,
-    payable_days: r.payable_days, per_day_rate: r.per_day_rate, gross_pay: r.gross_pay })), `payroll-${selectedMonth()}.csv`);
+  $("download-payroll").onclick = () => downloadCsv(state.payroll.map(r => ({
+    "Employee Name": r.employee_name, "Employee Code": r.employee_id, "Designation": r.designation,
+    "Bank Name": r.bank_name, "Bank Account No.": r.bank_account_no, "IFSC Code": r.ifsc_code,
+    "PF & ESI": [r.pf_applicable ? "PF" : "", r.esi_applicable ? "ESI" : ""].filter(Boolean).join(" & ") || "None",
+    "ABSENT": r.absent_days, "TOTAL DAYS-M": r.days_in_month, "NET PAYABLE DAYS": r.payable_days,
+    "GROSS SALARY": r.monthly_salary, "FIXED BASIC SALARY": r.fixed_basic_salary, "HRA": Math.round((r.monthly_salary - r.fixed_basic_salary) * 100) / 100,
+    "GROSS SALARY-P": r.gross_pay, "FIXED BASIC SALARY-P": r.basic_pay, "HRA-P": r.hra_pay,
+    "EMPY. PF CONT": r.pf_employee, "ARREAR": r.arrear, "PF.ABRY BENEFIT": r.pf_abry_benefit,
+    "EMP. ESIC CONT (0.75% NEW RATE)": r.esi_employee, "PROFESSIONAL TAX": r.professional_tax,
+    "OTHER DEDUCTIONS": r.other_deductions, "SALARY ON HOLD": r.salary_on_hold ? "Yes" : "No", "ADVANCE RECOVERY": r.advance_recovery,
+    "FNF": r.fnf_amount !== null ? r.fnf_amount : "", "NET TAKE HOME": r.net_pay,
+    "EMPY. PF CONT (Employer)": r.pf_employer, "EMP. ESIC CONT (Employer)": r.esi_employer, "CTC": r.ctc
+  })), `payroll-${selectedMonth()}.csv`);
 
   $("refresh-unrecognised").onclick = loadUnrecognised; $("clear-unrecognised").onclick = clearUnrecognised;
 

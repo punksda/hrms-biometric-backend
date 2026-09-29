@@ -67,6 +67,36 @@ async function initDb() {
   // Purely a human-readable label (e.g. "VCOR001") — not used for any
   // HRMS or biometric matching logic, unlike id or machine_user_id.
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS property_code TEXT DEFAULT '';`);
+  // Payroll/statutory fields. fixed_basic_salary is the wage PF and ESI are
+  // both actually calculated on (confirmed against a real payroll register —
+  // it is NOT the gross salary). pf_applicable/esi_applicable are per-employee
+  // enrollment flags, not a live salary threshold: real employees earning
+  // well above the ESI/PF ceilings still had contributions deducted, so
+  // eligibility has to be something HR sets, not something the system guesses.
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS fixed_basic_salary NUMERIC DEFAULT 0;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS pf_applicable BOOLEAN DEFAULT true;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS esi_applicable BOOLEAN DEFAULT true;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ifsc_code TEXT DEFAULT '';`);
+
+  // Per-employee, per-month manual payroll entries: arrears, ad-hoc
+  // deductions, advance recovery, salary hold, and full & final settlement.
+  // These change every pay run, so they don't belong on the employee record.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payroll_adjustments (
+      employee_id TEXT NOT NULL,
+      month TEXT NOT NULL,
+      arrear NUMERIC DEFAULT 0,
+      pf_abry_benefit NUMERIC DEFAULT 0,
+      other_deductions NUMERIC DEFAULT 0,
+      advance_recovery NUMERIC DEFAULT 0,
+      salary_on_hold BOOLEAN DEFAULT false,
+      fnf_amount NUMERIC,
+      PRIMARY KEY (employee_id, month)
+    );
+  `);
+
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS integrations (
@@ -188,6 +218,29 @@ async function initDb() {
       value TEXT
     );
   `);
+
+  // Statutory rates — seeded once, never overwritten on restart, so an
+  // in-app rate change (e.g. next PF ceiling revision) always sticks.
+  // PF rounds to the nearest rupee (EPFO convention); ESI always rounds UP
+  // (ESIC convention) — both confirmed against a real payroll register.
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES ('pf_ceiling', '25000') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES ('pf_rate', '0.12') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES ('esi_employee_rate', '0.0075') ON CONFLICT (key) DO NOTHING`);
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES ('esi_employer_rate', '0.0325') ON CONFLICT (key) DO NOTHING`);
+  // West Bengal Professional Tax slabs, effective September 2026 (per the
+  // gazette notification). Stored as JSON so a future slab revision is a
+  // data change, not a code change: [{upto, amount}], upto:null = no upper bound.
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES ('pt_slabs', $1) ON CONFLICT (key) DO NOTHING`,
+    [JSON.stringify([
+      { upto: 20000, amount: 0 }, { upto: 30000, amount: 100 }, { upto: 50000, amount: 140 },
+      { upto: 100000, amount: 170 }, { upto: null, amount: 208 }
+    ])]);
+
 
   // The system no longer invents "Unmapped (...)" employees from unknown
   // punches, so remove the ones created earlier. Safe to run on every
@@ -327,11 +380,57 @@ function compLedgerFor(rows, opening) {
   }
   return { opening: base, earned, used, balance: base + earned - used, as_of: start };
 }
+
+// PF rounds to the NEAREST rupee (EPFO convention). ESI always rounds UP
+// (ESIC convention: "any fraction of a rupee is rounded to the next higher
+// rupee"). Both confirmed against a real payroll register, not assumed.
+function roundNearest(x) { return Math.floor(x + 0.5); }
+function roundUp(x) { return Math.ceil(x); }
+
+// Computes one employee's statutory pay for a month, given their fixed
+// (full-month) basic salary and gross salary, and how many of the month's
+// days were actually payable. The wage ceiling applies to the FULL-month
+// basic first, then the capped figure is pro-rated — not the other way
+// round — matching how partial-month rows in the reference register work.
+function computeStatutory(emp, payableDays, totalDays, rates) {
+  const proration = totalDays ? payableDays / totalDays : 0;
+  const grossP = (Number(emp.monthly_salary) || 0) * proration; // "monthly_salary" is the employee's Gross Salary
+  const basicFull = Number(emp.fixed_basic_salary) || 0;
+  const cappedBasicFull = Math.min(basicFull, rates.pf_ceiling);
+  const basicP = basicFull * proration;           // "Fixed Basic Salary-P"
+  const cappedBasicP = cappedBasicFull * proration; // wage PF is actually charged on
+  const hraP = grossP - basicP;
+
+  const pf = emp.pf_applicable ? roundNearest(cappedBasicP * rates.pf_rate) : 0;
+  const esiEmployee = emp.esi_applicable ? roundUp(basicP * rates.esi_employee_rate) : 0;
+  const esiEmployer = emp.esi_applicable ? roundUp(basicP * rates.esi_employer_rate) : 0;
+  const pt = ptForSlab(grossP, rates.pt_slabs);
+  const ctc = grossP + pf + esiEmployer;
+
+  return { gross_p: grossP, basic_p: basicP, hra_p: hraP,
+    pf_employee: pf, pf_employer: pf, esi_employee: esiEmployee, esi_employer: esiEmployer,
+    professional_tax: pt, ctc };
+}
+function ptForSlab(grossP, slabs) {
+  for (const s of slabs) { if (s.upto === null || grossP <= s.upto) return s.amount; }
+  return 0;
+}
 // ==== PURE ENGINE END ====
 
 const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
-  to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code`;
+  to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
+  fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code`;
+
+async function getPayrollRates() {
+  const [ceiling, pfRate, esiEmpRate, esiEmplrRate, ptSlabs] = await Promise.all([
+    getSetting("pf_ceiling", "25000"), getSetting("pf_rate", "0.12"),
+    getSetting("esi_employee_rate", "0.0075"), getSetting("esi_employer_rate", "0.0325"),
+    getSetting("pt_slabs", "[]")
+  ]);
+  return { pf_ceiling: Number(ceiling), pf_rate: Number(pfRate),
+    esi_employee_rate: Number(esiEmpRate), esi_employer_rate: Number(esiEmplrRate), pt_slabs: JSON.parse(ptSlabs) };
+}
 
 async function getScopeEmployees(hotelId) {
   const r = (hotelId === "all" || !hotelId)
@@ -407,6 +506,11 @@ async function computeAttendance(hotelId, month) {
 // days: present, weekly off, comp off and paid leave. Unpaid: absent and any
 // leave type marked unpaid in the leave policy. Days before someone's joining
 // date are not counted, so a mid-month joiner is pro-rated automatically.
+// PF, ESI, Professional Tax and CTC are computed the same way your payroll
+// processor does it (verified against a real pay register): PF/ESI are
+// charged on Fixed Basic Salary (not Gross), PF rounds to the nearest rupee,
+// ESI always rounds up, and both only apply when the employee is flagged
+// pf_applicable / esi_applicable.
 async function computePayroll(hotelId, month) {
   const employees = await getScopeEmployees(hotelId);
   if (!employees.length) return [];
@@ -415,6 +519,12 @@ async function computePayroll(hotelId, month) {
   const paidByType = {};
   types.forEach(t => { paidByType[t.name] = t.paid; });
   const dim = daysInMonthOf(month);
+  const rates = await getPayrollRates();
+  const adjRes = await pool.query(
+    "SELECT * FROM payroll_adjustments WHERE month = $1 AND employee_id = ANY($2)", [month, employees.map(e => e.id)]);
+  const adjBy = {};
+  adjRes.rows.forEach(a => { adjBy[a.employee_id] = a; });
+
   const tallies = {};
   for (const row of attendance) {
     const t = (tallies[row.employee_id] ??= { present: 0, absent: 0, weekly_off: 0, comp_off: 0, leave: 0, unpaid_leave: 0 });
@@ -432,13 +542,28 @@ async function computePayroll(hotelId, month) {
     const perDay = dim ? monthlySalary / dim : 0;
     const payable = t.present + t.weekly_off + t.comp_off + t.leave;
     const gross = Math.round(perDay * payable * 100) / 100;
+    const stat = computeStatutory(emp, payable, dim, rates);
+    const a = adjBy[emp.id] || { arrear: 0, pf_abry_benefit: 0, other_deductions: 0, advance_recovery: 0, salary_on_hold: false, fnf_amount: null };
+    const arrear = Number(a.arrear) || 0, otherDed = Number(a.other_deductions) || 0, advRec = Number(a.advance_recovery) || 0;
+    const onHold = !!a.salary_on_hold;
+    const fnfAmount = a.fnf_amount === null || a.fnf_amount === undefined ? null : Number(a.fnf_amount);
+    const netBeforeHold = Math.round((gross + arrear - stat.pf_employee - stat.esi_employee - stat.professional_tax - otherDed - advRec) * 100) / 100;
+    const netPay = fnfAmount !== null ? fnfAmount : (onHold ? 0 : netBeforeHold);
     return {
       employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id,
-      monthly_salary: monthlySalary, days_in_month: dim,
+      designation: emp.role, bank_name: emp.bank_name || "", bank_account_no: emp.bank_account_no || "", ifsc_code: emp.ifsc_code || "",
+      monthly_salary: monthlySalary, fixed_basic_salary: Number(emp.fixed_basic_salary) || 0, days_in_month: dim,
       present_days: t.present, absent_days: t.absent, weekly_off_days: t.weekly_off,
       comp_off_days: t.comp_off, leave_days: t.leave, unpaid_leave_days: t.unpaid_leave,
       payable_days: payable, per_day_rate: Math.round(perDay * 100) / 100,
-      gross_pay: gross, net_pay: gross
+      gross_pay: gross, basic_pay: Math.round(stat.basic_p * 100) / 100, hra_pay: Math.round(stat.hra_p * 100) / 100,
+      pf_applicable: !!emp.pf_applicable, esi_applicable: !!emp.esi_applicable,
+      pf_employee: stat.pf_employee, pf_employer: stat.pf_employer,
+      esi_employee: stat.esi_employee, esi_employer: stat.esi_employer,
+      professional_tax: stat.professional_tax,
+      arrear, pf_abry_benefit: Number(a.pf_abry_benefit) || 0, other_deductions: otherDed, advance_recovery: advRec,
+      salary_on_hold: onHold, fnf_amount: fnfAmount,
+      ctc: Math.round(stat.ctc * 100) / 100, net_pay: netPay
     };
   }).sort((a, b) => String(a.employee_name).localeCompare(String(b.employee_name)));
 }
@@ -866,13 +991,20 @@ app.post("/api/employees", async (req, res) => {
       return res.status(409).json({ status: "error", message: `Employee ${id} already exists. Use edit instead.` });
     }
     const salary = body.monthly_salary !== undefined && !isNaN(Number(body.monthly_salary)) ? Number(body.monthly_salary) : 0;
+    const basicSalary = body.fixed_basic_salary !== undefined && !isNaN(Number(body.fixed_basic_salary)) ? Number(body.fixed_basic_salary) : 0;
+    const pfApplicable = body.pf_applicable === undefined ? true : !!body.pf_applicable;
+    const esiApplicable = body.esi_applicable === undefined ? true : !!body.esi_applicable;
     const doj = ymd(body.date_of_joining);
     const r = await pool.query(
-      `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code)
-       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8) RETURNING *`,
+      `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
+         fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
+       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
       [id, name, body.hotel_id ? String(body.hotel_id).trim() : "", body.role ? String(body.role).trim() : "",
        body.machine_user_id ? String(body.machine_user_id).trim() : "", salary, doj,
-       body.property_code ? String(body.property_code).trim() : ""]
+       body.property_code ? String(body.property_code).trim() : "",
+       basicSalary, pfApplicable, esiApplicable,
+       body.bank_name ? String(body.bank_name).trim() : "", body.bank_account_no ? String(body.bank_account_no).trim() : "",
+       body.ifsc_code ? String(body.ifsc_code).trim().toUpperCase() : ""]
     );
     res.json({ status: "success", employee: r.rows[0] });
   } catch (error) {
@@ -883,7 +1015,8 @@ app.post("/api/employees", async (req, res) => {
 
 // Edits an existing employee's core fields. Any field left out keeps its
 // current value. Body: any of { name, hotel_id, role, monthly_salary,
-// date_of_joining, machine_user_id, status, property_code }.
+// date_of_joining, machine_user_id, status, property_code, fixed_basic_salary,
+// pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code }.
 app.patch("/api/employees/:id", async (req, res) => {
   try {
     const body = req.body || {};
@@ -891,9 +1024,13 @@ app.patch("/api/employees/:id", async (req, res) => {
     if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
     const current = existing.rows[0];
     const salary = body.monthly_salary !== undefined && !isNaN(Number(body.monthly_salary)) ? Number(body.monthly_salary) : current.monthly_salary;
+    const basicSalary = body.fixed_basic_salary !== undefined && !isNaN(Number(body.fixed_basic_salary)) ? Number(body.fixed_basic_salary) : current.fixed_basic_salary;
+    const pfApplicable = body.pf_applicable !== undefined ? !!body.pf_applicable : current.pf_applicable;
+    const esiApplicable = body.esi_applicable !== undefined ? !!body.esi_applicable : current.esi_applicable;
     const doj = body.date_of_joining !== undefined ? ymd(body.date_of_joining) : current.date_of_joining;
     const r = await pool.query(
-      `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9
+      `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9,
+         fixed_basic_salary=$10, pf_applicable=$11, esi_applicable=$12, bank_name=$13, bank_account_no=$14, ifsc_code=$15
        WHERE id=$1 RETURNING *`,
       [
         req.params.id,
@@ -903,7 +1040,11 @@ app.patch("/api/employees/:id", async (req, res) => {
         body.machine_user_id !== undefined ? String(body.machine_user_id).trim() : current.machine_user_id,
         salary, doj,
         body.status !== undefined ? String(body.status).trim() : current.status,
-        body.property_code !== undefined ? String(body.property_code).trim() : current.property_code
+        body.property_code !== undefined ? String(body.property_code).trim() : current.property_code,
+        basicSalary, pfApplicable, esiApplicable,
+        body.bank_name !== undefined ? String(body.bank_name).trim() : current.bank_name,
+        body.bank_account_no !== undefined ? String(body.bank_account_no).trim() : current.bank_account_no,
+        body.ifsc_code !== undefined ? String(body.ifsc_code).trim().toUpperCase() : current.ifsc_code
       ]
     );
     res.json({ status: "success", employee: r.rows[0] });
@@ -953,6 +1094,10 @@ app.post("/api/employees/import", async (req, res) => {
       if (!employee_id) { skipped++; continue; }
       const salary = row.monthly_salary !== undefined && row.monthly_salary !== "" && !isNaN(Number(row.monthly_salary))
         ? Number(row.monthly_salary) : null;
+      const basicSalary = row.fixed_basic_salary !== undefined && row.fixed_basic_salary !== "" && !isNaN(Number(row.fixed_basic_salary))
+        ? Number(row.fixed_basic_salary) : null;
+      const pfApplicable = row.pf_applicable === undefined || row.pf_applicable === "" ? null : !/^(n|no|false|0)$/i.test(String(row.pf_applicable).trim());
+      const esiApplicable = row.esi_applicable === undefined || row.esi_applicable === "" ? null : !/^(n|no|false|0)$/i.test(String(row.esi_applicable).trim());
       const doj = row.date_of_joining ? ymd(row.date_of_joining) : null;
       // The CSV's Branch column holds a hotel *name*, but employees.hotel_id
       // stores the hotel's id ("HAAC"). Accept either.
@@ -971,16 +1116,26 @@ app.post("/api/employees/import", async (req, res) => {
              status = COALESCE(NULLIF($6, ''), status),
              monthly_salary = COALESCE($7, monthly_salary),
              date_of_joining = COALESCE($8, date_of_joining),
-             property_code = COALESCE(NULLIF($9, ''), property_code)
+             property_code = COALESCE(NULLIF($9, ''), property_code),
+             fixed_basic_salary = COALESCE($10, fixed_basic_salary),
+             pf_applicable = COALESCE($11, pf_applicable),
+             esi_applicable = COALESCE($12, esi_applicable),
+             bank_name = COALESCE(NULLIF($13, ''), bank_name),
+             bank_account_no = COALESCE(NULLIF($14, ''), bank_account_no),
+             ifsc_code = COALESCE(NULLIF($15, ''), ifsc_code)
            WHERE id = $1`,
-          [employee_id, row.name || "", row.machine_user_id || "", resolvedHotelId, row.role || "", row.status || "", salary, doj, row.property_code || ""]
+          [employee_id, row.name || "", row.machine_user_id || "", resolvedHotelId, row.role || "", row.status || "", salary, doj, row.property_code || "",
+           basicSalary, pfApplicable, esiApplicable, row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
         );
         updated++;
       } else {
         await pool.query(
-          `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [employee_id, row.name || "", resolvedHotelId, row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || ""]
+          `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
+             fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          [employee_id, row.name || "", resolvedHotelId, row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || "",
+           basicSalary || 0, pfApplicable === null ? true : pfApplicable, esiApplicable === null ? true : esiApplicable,
+           row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
         );
         created++;
       }
@@ -1345,7 +1500,123 @@ app.delete("/api/biometric/unrecognised", async (req, res) => {
   }
 });
 
+// Bulk-fill or correct actual device punches for a whole month in one go —
+// the sheet-based counterpart to individual webhook punches. Body:
+// { rows: [{ employee_id, date, in_time, out_time }] }. in_time/out_time are
+// "HH:MM" (out_time optional). Both blank clears that day's uploaded punches.
+// Re-uploading a corrected sheet replaces exactly the days it covers, so it's
+// safe to run again after fixing a mistake.
+app.post("/api/attendance/bulk-import", async (req, res) => {
+  try {
+    const rows = (req.body && req.body.rows) || [];
+    if (!Array.isArray(rows) || !rows.length) {
+      return res.status(400).json({ status: "error", message: "rows must be a non-empty array of { employee_id, date, in_time, out_time }." });
+    }
+    const timeRe = /^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/;
+    const pairs = [], codes = [], datetimes = [], logTimes = [], deviceSns = [], sources = [];
+    let skipped = 0, badTimes = 0;
+    for (const row of rows) {
+      const employee_id = row.employee_id ? String(row.employee_id).trim() : "";
+      const date = ymd(row.date);
+      if (!employee_id || !date) { skipped++; continue; }
+      pairs.push([employee_id, date]);
+      for (const raw of [row.in_time, row.out_time]) {
+        const t = raw ? String(raw).trim() : "";
+        if (!t) continue;
+        if (!timeRe.test(t)) { badTimes++; continue; }
+        const hhmm = t.length === 5 ? t + ":00" : t;
+        codes.push(employee_id); datetimes.push(`${date} ${hhmm}`); logTimes.push(hhmm); deviceSns.push(""); sources.push("bulk_import");
+      }
+    }
+    if (!pairs.length) return res.status(400).json({ status: "error", message: "No valid employee_id/date rows found." });
+    const BATCH = 2000;
+    for (let i = 0; i < pairs.length; i += BATCH) {
+      const part = pairs.slice(i, i + BATCH);
+      await pool.query(
+        `DELETE FROM attendance_logs d USING unnest($1::text[], $2::text[]) AS t(employee_code, date)
+         WHERE d.source = 'bulk_import' AND d.employee_code = t.employee_code AND substring(d.log_datetime, 1, 10) = t.date`,
+        [part.map(p => p[0]), part.map(p => p[1])]);
+    }
+    for (let i = 0; i < codes.length; i += BATCH) {
+      const end = i + BATCH;
+      await pool.query(
+        `INSERT INTO attendance_logs (employee_code, log_datetime, log_time, downloaded_at, device_sn, source)
+         SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+         ON CONFLICT (employee_code, log_datetime, device_sn) DO NOTHING`,
+        [codes.slice(i, end), datetimes.slice(i, end), logTimes.slice(i, end), datetimes.slice(i, end), deviceSns.slice(i, end), sources.slice(i, end)]);
+    }
+    res.json({ status: "success", days_covered: pairs.length, punches_saved: codes.length, skipped, bad_times: badTimes });
+  } catch (error) {
+    console.error("POST /api/attendance/bulk-import failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Payroll: per-employee monthly adjustments, and the statutory rates
+// ---------------------------------------------------------------------
+// Body: { employee_id, month "YYYY-MM", arrear?, pf_abry_benefit?, other_deductions?,
+//         advance_recovery?, salary_on_hold?, fnf_amount? }. Any field left out keeps
+// its current value for that employee/month; this always upserts one row.
+app.post("/api/payroll/adjustments", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const employee_id = body.employee_id ? String(body.employee_id).trim() : "";
+    const month = body.month ? String(body.month).trim() : "";
+    if (!employee_id || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ status: "error", message: "employee_id and month (YYYY-MM) are required." });
+    }
+    const num = (v, d) => v === undefined ? d : (v === "" || v === null ? null : Number(v));
+    const existing = await pool.query("SELECT * FROM payroll_adjustments WHERE employee_id = $1 AND month = $2", [employee_id, month]);
+    const cur = existing.rows[0] || { arrear: 0, pf_abry_benefit: 0, other_deductions: 0, advance_recovery: 0, salary_on_hold: false, fnf_amount: null };
+    const arrear = num(body.arrear, cur.arrear) ?? 0;
+    const abry = num(body.pf_abry_benefit, cur.pf_abry_benefit) ?? 0;
+    const otherDed = num(body.other_deductions, cur.other_deductions) ?? 0;
+    const advRec = num(body.advance_recovery, cur.advance_recovery) ?? 0;
+    const onHold = body.salary_on_hold !== undefined ? !!body.salary_on_hold : !!cur.salary_on_hold;
+    const fnf = body.fnf_amount !== undefined ? num(body.fnf_amount, null) : cur.fnf_amount;
+    const r = await pool.query(
+      `INSERT INTO payroll_adjustments (employee_id, month, arrear, pf_abry_benefit, other_deductions, advance_recovery, salary_on_hold, fnf_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (employee_id, month) DO UPDATE SET
+         arrear = EXCLUDED.arrear, pf_abry_benefit = EXCLUDED.pf_abry_benefit, other_deductions = EXCLUDED.other_deductions,
+         advance_recovery = EXCLUDED.advance_recovery, salary_on_hold = EXCLUDED.salary_on_hold, fnf_amount = EXCLUDED.fnf_amount
+       RETURNING *`,
+      [employee_id, month, arrear, abry, otherDed, advRec, onHold, fnf]
+    );
+    res.json({ status: "success", adjustment: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/payroll/adjustments failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// The PF/ESI rates and PT slabs currently in effect. Stored in the
+// database (not hard-coded) so a future rate change — like this month's
+// PF ceiling revision — is a data update, not a redeploy.
+app.get("/api/payroll/rates", async (req, res) => {
+  try { res.json({ status: "success", rates: await getPayrollRates() }); }
+  catch (error) { res.status(500).json({ status: "error", message: error.message }); }
+});
+// Body: any of { pf_ceiling, pf_rate, esi_employee_rate, esi_employer_rate, pt_slabs }.
+// pt_slabs, if given, replaces the whole table: [{upto, amount}], upto:null = no upper bound.
+app.post("/api/payroll/rates", async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (body.pf_ceiling !== undefined) await setSetting("pf_ceiling", Number(body.pf_ceiling));
+    if (body.pf_rate !== undefined) await setSetting("pf_rate", Number(body.pf_rate));
+    if (body.esi_employee_rate !== undefined) await setSetting("esi_employee_rate", Number(body.esi_employee_rate));
+    if (body.esi_employer_rate !== undefined) await setSetting("esi_employer_rate", Number(body.esi_employer_rate));
+    if (body.pt_slabs !== undefined) await setSetting("pt_slabs", JSON.stringify(body.pt_slabs));
+    res.json({ status: "success", rates: await getPayrollRates() });
+  } catch (error) {
+    console.error("POST /api/payroll/rates failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
+
 initDb()
   .then(() => {
     app.listen(PORT, () => {
