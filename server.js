@@ -19,7 +19,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 // Serves the dashboard itself — public/index.html — from this same
 // service, at the same URL as the API. Visiting the backend's root URL
@@ -163,8 +163,44 @@ async function initDb() {
     );
   }
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leave_types (
+      name TEXT PRIMARY KEY,
+      code TEXT,
+      annual_days NUMERIC DEFAULT 0,
+      paid BOOLEAN DEFAULT true
+    );
+  `);
+  // Opening balance per employee per leave type (including "Comp Off"),
+  // valid from as_of onward. Uploaded once mid-year from the old spreadsheet.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leave_balances (
+      employee_id TEXT NOT NULL,
+      leave_type TEXT NOT NULL,
+      opening_balance NUMERIC NOT NULL DEFAULT 0,
+      as_of DATE NOT NULL,
+      PRIMARY KEY (employee_id, leave_type)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
+
+  // The system no longer invents "Unmapped (...)" employees from unknown
+  // punches, so remove the ones created earlier. Safe to run on every
+  // start: once they're gone this deletes nothing.
+  const cleaned = await pool.query("DELETE FROM employees WHERE name LIKE 'Unmapped (%)'");
+  if (cleaned.rowCount) console.log(`Removed ${cleaned.rowCount} auto-created "Unmapped" employees.`);
+
   console.log("Database ready.");
 }
+
+// ==== PURE ENGINE START ====
+// Everything between the START/END markers is plain logic with no database
+// access, so it can be tested on its own.
 
 // Pull just the YYYY-MM-DD part out of whatever date format shows up.
 function ymd(value) {
@@ -176,257 +212,271 @@ function ymd(value) {
   if (!isNaN(d)) return d.toISOString().slice(0, 10);
   return null;
 }
+function pad2(n) { return String(n).padStart(2, "0"); }
+// The hotels are in India and the server runs in UTC, so "today" must be
+// worked out in IST or the current day would only appear at 5:30am.
+function todayIst() { return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); }
+function daysInMonthOf(month) { return new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate(); }
+function eachDate(start, end, cb) {
+  const d = new Date(start + "T00:00:00Z");
+  const e = new Date(end + "T00:00:00Z");
+  while (d <= e) { cb(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); }
+}
+// Minutes since midnight from "2026-09-27 08:45:00" or "2026-09-27T08:45:00".
+function timeToMinutes(dt) {
+  const m = String(dt || "").match(/[T\s](\d{2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+function fmtMins(m) { return m == null ? null : `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`; }
 
-// Computes a day-by-day attendance status per employee, chronologically,
-// so a comp-off earned on one day can be spent on any later absence.
-// Fetches the raw rows from the DB, then runs the same grouping logic
-// as before in JS — the tricky chronological comp-off math stays in
-// plain JS rather than being reimplemented as SQL.
-async function computeAttendance(hotelId, month) {
-  const empRes = (hotelId === "all" || !hotelId)
-    ? await pool.query("SELECT * FROM employees")
-    : await pool.query("SELECT * FROM employees WHERE hotel_id = $1", [hotelId]);
-  const scopeEmployees = empRes.rows;
-  if (!scopeEmployees.length) return [];
+// Turns one day's raw punch times into: how many real punches there were,
+// first-in, last-out and total duty minutes. Punches within 5 minutes of
+// the previous one count as a single punch (people often scan twice), so
+// a double-scan at arrival is correctly treated as "no checkout yet".
+function summarisePunches(arr) {
+  if (!arr || !arr.length) return { count: 0, in: null, out: null, minutes: null };
+  const timed = arr.filter(m => m !== null).sort((a, b) => a - b);
+  const untimed = arr.length - timed.length;
+  const clusters = [];
+  let last = null;
+  for (const m of timed) { if (last === null || m - last > 5) clusters.push(m); last = m; }
+  const count = clusters.length + untimed;
+  if (clusters.length >= 2) {
+    const first = timed[0], lastT = timed[timed.length - 1];
+    return { count, in: first, out: lastT, minutes: lastT - first };
+  }
+  return { count, in: timed.length ? timed[0] : null, out: null, minutes: null };
+}
 
-  const empIds = scopeEmployees.map(e => e.id);
-  const matchCodes = Array.from(new Set(
-    scopeEmployees.flatMap(e => [e.id, e.machine_user_id]).filter(Boolean)
-  ));
+// Walks one employee day by day and decides each day's status.
+//  - dense days:  every calendar day from denseStart to endDate
+//  - sparse days: earlier days that have any data, only so comp-off credit
+//                 earned before denseStart still carries forward
+//  - data: { roster:{date:type}, punchMap:{date:[minutes]}, overrides:{date:status}, compOpening:{balance,asOf}|null }
+// Rules: scheduled weekly off + punch => "Present (Worked Weekly Off)" and +1
+// comp-off; working day with 2+ punches => Present, 1 => Present (Incomplete),
+// none => Comp Off if a credit is available, otherwise Absent. A manual
+// override always wins. Days before the employee's joining date are skipped.
+// If an opening comp-off balance was uploaded, only days on/after its date
+// move the balance.
+function walkEmployee(emp, data, denseStart, endDate) {
+  const roster = data.roster || {}, punchMap = data.punchMap || {}, overrides = data.overrides || {};
+  const comp = data.compOpening || null;
+  const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
 
-  const rosterRes = await pool.query(
-    `SELECT employee_id, to_char(date, 'YYYY-MM-DD') AS date, type
-     FROM duty_roster WHERE employee_id = ANY($1)`,
-    [empIds]
-  );
-  const logsRes = matchCodes.length
-    ? await pool.query(
-        `SELECT employee_code, log_datetime, received_at
-         FROM attendance_logs WHERE employee_code = ANY($1)`,
-        [matchCodes]
-      )
-    : { rows: [] };
-  const overridesRes = await pool.query(
-    `SELECT employee_id, to_char(date, 'YYYY-MM-DD') AS date, status
-     FROM attendance_overrides WHERE employee_id = ANY($1)`,
-    [empIds]
-  );
+  const dates = new Set();
+  [roster, punchMap, overrides].forEach(o => Object.keys(o).forEach(d => { if (d < denseStart && d <= endDate) dates.add(d); }));
+  if (denseStart <= endDate) eachDate(denseStart, endDate, d => dates.add(d));
+  const sorted = Array.from(dates).sort();
 
-  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
-  const monthStart = `${month}-01`;
-  const monthEnd = `${month}-${String(daysInMonth).padStart(2, "0")}`;
-  const todayStr = new Date().toISOString().slice(0, 10);
-  // Cap at today so a day that hasn't happened yet is never shown/marked
-  // Absent — but if the requested month is entirely in the past, show
-  // every day of it as normal.
-  const displayEnd = todayStr < monthEnd ? todayStr : monthEnd;
-  const results = [];
-
-  for (const emp of scopeEmployees) {
-    const rosterByDate = {};
-    rosterRes.rows.filter(r => String(r.employee_id) === String(emp.id)).forEach(r => {
-      rosterByDate[r.date] = r.type;
+  const compStart = comp ? comp.asOf : null;
+  let compBal = comp ? comp.balance : 0;
+  const rows = [];
+  for (const date of sorted) {
+    if (doj && date < doj) continue;
+    const counts = !compStart || date >= compStart;
+    const pd = summarisePunches(punchMap[date]);
+    const rosterType = roster[date];
+    let status, overridden = false;
+    if (Object.prototype.hasOwnProperty.call(overrides, date)) {
+      status = overrides[date]; overridden = true;
+    } else if (rosterType === "Weekly Off") {
+      status = pd.count > 0 ? "Present (Worked Weekly Off)" : "Weekly Off";
+    } else if (pd.count >= 2) {
+      status = "Present";
+    } else if (pd.count === 1) {
+      status = "Present (Incomplete)";
+    } else if (counts && compBal > 0) {
+      status = "Comp Off";
+    } else {
+      status = "Absent";
+    }
+    if (counts) {
+      if (status === "Present (Worked Weekly Off)") compBal++;
+      else if (status === "Comp Off") compBal--;
+    }
+    rows.push({
+      date, status, overridden,
+      punches: pd.count,
+      in_time: fmtMins(pd.in), out_time: fmtMins(pd.out), duty_minutes: pd.minutes,
+      shift: rosterType || null
     });
+  }
+  return rows;
+}
 
-    const punchesByDate = {};
-    logsRes.rows
-      .filter(l => {
-        const code = l.employee_code ? String(l.employee_code) : "";
-        if (!code) return false; // never match a blank punch code to a blank machine_user_id
-        return (emp.machine_user_id && code === String(emp.machine_user_id)) || code === String(emp.id);
-      })
-      .forEach(l => {
+// Leave balance for one leave type. With an uploaded opening balance dated on
+// or after the start of the leave year, that balance is the starting point and
+// only leaves taken on/after its date are deducted. Otherwise the policy's
+// annual entitlement is the starting point from the start of the leave year.
+function leaveBalanceFor(rows, type, opening, yearStart) {
+  const useOpening = !!opening && opening.asOf >= yearStart;
+  const start = useOpening ? opening.asOf : yearStart;
+  const base = useOpening ? opening.balance : (Number(type.annual_days) || 0);
+  const used = rows.filter(r => r.status === type.name && r.date >= start).length;
+  return { opening: base, used, balance: base - used, as_of: useOpening ? opening.asOf : null };
+}
+function compLedgerFor(rows, opening) {
+  const start = opening ? opening.asOf : null;
+  const base = opening ? opening.balance : 0;
+  let earned = 0, used = 0;
+  for (const r of rows) {
+    if (start && r.date < start) continue;
+    if (r.status === "Present (Worked Weekly Off)") earned++;
+    else if (r.status === "Comp Off") used++;
+  }
+  return { opening: base, earned, used, balance: base + earned - used, as_of: start };
+}
+// ==== PURE ENGINE END ====
+
+const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent"];
+const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
+  to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code`;
+
+async function getScopeEmployees(hotelId) {
+  const r = (hotelId === "all" || !hotelId)
+    ? await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees ORDER BY id`)
+    : await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees WHERE hotel_id = $1 ORDER BY id`, [hotelId]);
+  return r.rows;
+}
+async function getSetting(key, fallback) {
+  const r = await pool.query("SELECT value FROM settings WHERE key = $1", [key]);
+  return r.rows.length ? r.rows[0].value : fallback;
+}
+async function setSetting(key, value) {
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [key, String(value)]);
+}
+
+// Loads everything needed to work out attendance for a set of employees in
+// one round of queries, then hands back a per-employee slice.
+async function loadAttendanceContext(employees) {
+  const empIds = employees.map(e => e.id);
+  const matchCodes = Array.from(new Set(employees.flatMap(e => [e.id, e.machine_user_id]).filter(Boolean)));
+  const [rosterRes, logsRes, overridesRes, compRes] = await Promise.all([
+    pool.query(`SELECT employee_id, to_char(date,'YYYY-MM-DD') AS date, type FROM duty_roster WHERE employee_id = ANY($1)`, [empIds]),
+    matchCodes.length
+      ? pool.query(`SELECT employee_code, log_datetime, received_at FROM attendance_logs WHERE employee_code = ANY($1)`, [matchCodes])
+      : Promise.resolve({ rows: [] }),
+    pool.query(`SELECT employee_id, to_char(date,'YYYY-MM-DD') AS date, status FROM attendance_overrides WHERE employee_id = ANY($1)`, [empIds]),
+    pool.query(`SELECT employee_id, opening_balance, to_char(as_of,'YYYY-MM-DD') AS as_of FROM leave_balances
+                WHERE leave_type = 'Comp Off' AND employee_id = ANY($1)`, [empIds])
+  ]);
+  const rosterBy = {}, overridesBy = {}, compBy = {}, logsByCode = {};
+  rosterRes.rows.forEach(r => { (rosterBy[r.employee_id] ??= {})[r.date] = r.type; });
+  overridesRes.rows.forEach(o => { (overridesBy[o.employee_id] ??= {})[o.date] = o.status; });
+  compRes.rows.forEach(c => { compBy[c.employee_id] = { balance: Number(c.opening_balance), asOf: c.as_of }; });
+  logsRes.rows.forEach(l => { (logsByCode[String(l.employee_code)] ??= []).push(l); });
+  return {
+    forEmployee(emp) {
+      // A punch belongs to an employee if its code equals their id or their
+      // device card number. Blank values never match anything.
+      const codes = new Set([String(emp.id)]);
+      if (emp.machine_user_id) codes.add(String(emp.machine_user_id));
+      const punchMap = {};
+      codes.forEach(c => (logsByCode[c] || []).forEach(l => {
         const d = ymd(l.log_datetime || l.received_at);
         if (!d) return;
-        punchesByDate[d] = (punchesByDate[d] || 0) + 1;
-      });
-
-    const overridesByDate = {};
-    overridesRes.rows.filter(o => String(o.employee_id) === String(emp.id)).forEach(o => {
-      overridesByDate[o.date] = o.status;
-    });
-
-    // Sparse dates from before this month, purely to carry comp-off
-    // balance forward correctly — plus every calendar day of the
-    // display month itself, so no day is silently skipped.
-    const priorDates = Array.from(new Set([
-      ...Object.keys(rosterByDate),
-      ...Object.keys(punchesByDate),
-      ...Object.keys(overridesByDate)
-    ])).filter(d => d < monthStart);
-
-    const currentMonthDates = [];
-    if (todayStr >= monthStart) {
-      for (let day = 1; day <= daysInMonth; day++) {
-        const date = `${month}-${String(day).padStart(2, "0")}`;
-        if (date > displayEnd) break;
-        currentMonthDates.push(date);
-      }
+        (punchMap[d] ??= []).push(l.log_datetime ? timeToMinutes(l.log_datetime) : null);
+      }));
+      return { roster: rosterBy[emp.id] || {}, overrides: overridesBy[emp.id] || {}, punchMap, compOpening: compBy[emp.id] || null };
     }
-
-    const allDates = [...priorDates, ...currentMonthDates].sort();
-
-    let compOffBalance = 0;
-
-    for (const date of allDates) {
-      const punches = punchesByDate[date] || 0;
-      const rosterType = rosterByDate[date];
-      const isWeeklyOff = rosterType === "Weekly Off";
-      let status;
-
-      if (isWeeklyOff) {
-        if (punches > 0) {
-          status = "Present (Worked Weekly Off)";
-          compOffBalance += 1;
-        } else {
-          status = "Weekly Off";
-        }
-      } else {
-        if (punches >= 2) {
-          status = "Present";
-        } else if (punches === 1) {
-          status = "Present (Incomplete)";
-        } else if (compOffBalance > 0) {
-          status = "Comp Off";
-          compOffBalance -= 1;
-        } else {
-          status = "Absent";
-        }
-      }
-
-      const overridden = Object.prototype.hasOwnProperty.call(overridesByDate, date);
-      if (overridden) status = overridesByDate[date];
-
-      if (date >= monthStart && date <= monthEnd) {
-        results.push({
-          employee_id: emp.id,
-          employee_name: emp.name,
-          hotel_id: emp.hotel_id,
-          date,
-          punches,
-          status,
-          shift: rosterType || null,
-          overridden
-        });
-      }
-    }
-  }
-
-  return results.sort((a, b) => (a.date === b.date ? a.employee_name.localeCompare(b.employee_name) : a.date.localeCompare(b.date)));
+  };
 }
 
-// Turns a month's day-by-day attendance into payroll figures per employee.
-// Simple daily-rate model: monthly_salary / calendar days in month = per-day
-// rate; every day that isn't "Absent" (Present, Present (Incomplete),
-// Present (Worked Weekly Off), Weekly Off, Comp Off) is paid. Absences are
-// unpaid. This intentionally stays simple — no separate deductions/bonuses
-// yet — but gives a real, editable number to work from.
+async function computeAttendance(hotelId, month) {
+  const employees = await getScopeEmployees(hotelId);
+  if (!employees.length) return [];
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-${pad2(daysInMonthOf(month))}`;
+  const today = todayIst();
+  const endDate = today < monthEnd ? today : monthEnd; // never mark future days
+  if (endDate < monthStart) return [];
+  const ctx = await loadAttendanceContext(employees);
+  const results = [];
+  for (const emp of employees) {
+    walkEmployee(emp, ctx.forEmployee(emp), monthStart, endDate)
+      .filter(r => r.date >= monthStart && r.date <= endDate)
+      .forEach(r => results.push({ employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id, ...r }));
+  }
+  return results.sort((a, b) => a.date === b.date ? String(a.employee_id).localeCompare(String(b.employee_id)) : a.date.localeCompare(b.date));
+}
+
+// Monthly pay = monthly_salary / calendar days in month, per paid day. Paid
+// days: present, weekly off, comp off and paid leave. Unpaid: absent and any
+// leave type marked unpaid in the leave policy. Days before someone's joining
+// date are not counted, so a mid-month joiner is pro-rated automatically.
 async function computePayroll(hotelId, month) {
-  const empRes = (hotelId === "all" || !hotelId)
-    ? await pool.query("SELECT * FROM employees")
-    : await pool.query("SELECT * FROM employees WHERE hotel_id = $1", [hotelId]);
-  const scopeEmployees = empRes.rows;
-  if (!scopeEmployees.length) return [];
-
+  const employees = await getScopeEmployees(hotelId);
+  if (!employees.length) return [];
   const attendance = await computeAttendance(hotelId, month);
-  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
-
+  const types = (await pool.query("SELECT name, paid FROM leave_types")).rows;
+  const paidByType = {};
+  types.forEach(t => { paidByType[t.name] = t.paid; });
+  const dim = daysInMonthOf(month);
   const tallies = {};
   for (const row of attendance) {
-    const t = (tallies[row.employee_id] ??= { present: 0, absent: 0, weekly_off: 0, comp_off: 0 });
-    if (row.status === "Absent") t.absent++;
-    else if (row.status === "Weekly Off") t.weekly_off++;
-    else if (row.status === "Comp Off") t.comp_off++;
-    else t.present++; // Present, Present (Incomplete), Present (Worked Weekly Off)
+    const t = (tallies[row.employee_id] ??= { present: 0, absent: 0, weekly_off: 0, comp_off: 0, leave: 0, unpaid_leave: 0 });
+    const s = row.status;
+    if (s === "Absent") t.absent++;
+    else if (s === "Weekly Off") t.weekly_off++;
+    else if (s === "Comp Off") t.comp_off++;
+    else if (s.indexOf("Present") === 0) t.present++;
+    else if (paidByType[s] === false) t.unpaid_leave++;
+    else t.leave++;
   }
-
-  return scopeEmployees.map(emp => {
-    const t = tallies[emp.id] || { present: 0, absent: 0, weekly_off: 0, comp_off: 0 };
+  return employees.map(emp => {
+    const t = tallies[emp.id] || { present: 0, absent: 0, weekly_off: 0, comp_off: 0, leave: 0, unpaid_leave: 0 };
     const monthlySalary = Number(emp.monthly_salary) || 0;
-    const perDayRate = daysInMonth ? monthlySalary / daysInMonth : 0;
-    const payableDays = t.present + t.weekly_off + t.comp_off;
-    const grossPay = Math.round(perDayRate * payableDays * 100) / 100;
+    const perDay = dim ? monthlySalary / dim : 0;
+    const payable = t.present + t.weekly_off + t.comp_off + t.leave;
+    const gross = Math.round(perDay * payable * 100) / 100;
     return {
-      employee_id: emp.id,
-      employee_name: emp.name,
-      hotel_id: emp.hotel_id,
-      monthly_salary: monthlySalary,
-      days_in_month: daysInMonth,
-      present_days: t.present,
-      absent_days: t.absent,
-      weekly_off_days: t.weekly_off,
-      comp_off_days: t.comp_off,
-      payable_days: payableDays,
-      per_day_rate: Math.round(perDayRate * 100) / 100,
-      gross_pay: grossPay,
-      net_pay: grossPay
+      employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id,
+      monthly_salary: monthlySalary, days_in_month: dim,
+      present_days: t.present, absent_days: t.absent, weekly_off_days: t.weekly_off,
+      comp_off_days: t.comp_off, leave_days: t.leave, unpaid_leave_days: t.unpaid_leave,
+      payable_days: payable, per_day_rate: Math.round(perDay * 100) / 100,
+      gross_pay: gross, net_pay: gross
     };
-  }).sort((a, b) => a.employee_name.localeCompare(b.employee_name));
+  }).sort((a, b) => String(a.employee_name).localeCompare(String(b.employee_name)));
 }
 
-// Comp-off activity per employee within the given month — how many they
-// earned (worked a scheduled day off) and how many were spent (an absence
-// automatically covered by a balance). This is that month's activity, not
-// a true running total-to-date across all months — a day covered this
-// month may have been funded by a credit earned in an earlier month.
-async function computeCompOffLedger(hotelId, month) {
-  const attendance = await computeAttendance(hotelId, month);
-  const empRes = (hotelId === "all" || !hotelId)
-    ? await pool.query("SELECT * FROM employees")
-    : await pool.query("SELECT * FROM employees WHERE hotel_id = $1", [hotelId]);
+// Leave balances and comp-off for everyone in scope, as of the end of the
+// selected month (or today if that month is still running).
+async function computeLeaves(hotelId, month) {
+  const employees = await getScopeEmployees(hotelId);
+  const types = (await pool.query("SELECT name, code, annual_days, paid FROM leave_types ORDER BY name"))
+    .rows.map(t => ({ name: t.name, code: t.code, annual_days: Number(t.annual_days), paid: t.paid }));
+  const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
+  const y = Number(month.slice(0, 4)), m = Number(month.slice(5, 7));
+  const yearStart = `${m >= startMonth ? y : y - 1}-${pad2(startMonth)}-01`;
+  const monthEnd = `${month}-${pad2(daysInMonthOf(month))}`;
+  const today = todayIst();
+  const endDate = today < monthEnd ? today : monthEnd;
+  if (!employees.length) return { leave_types: types, year_start: yearStart, end_date: endDate, records: [] };
 
-  const tallies = {};
-  for (const row of attendance) {
-    const t = (tallies[row.employee_id] ??= { earned: 0, used: 0 });
-    if (row.status === "Present (Worked Weekly Off)") t.earned++;
-    else if (row.status === "Comp Off") t.used++;
-  }
+  const ctx = await loadAttendanceContext(employees);
+  const balRes = await pool.query(
+    `SELECT employee_id, leave_type, opening_balance, to_char(as_of,'YYYY-MM-DD') AS as_of
+     FROM leave_balances WHERE employee_id = ANY($1)`, [employees.map(e => e.id)]);
+  const openBy = {};
+  balRes.rows.forEach(b => { (openBy[b.employee_id] ??= {})[b.leave_type] = { balance: Number(b.opening_balance), asOf: b.as_of }; });
 
-  return empRes.rows.map(emp => {
-    const t = tallies[emp.id] || { earned: 0, used: 0 };
+  const records = employees.map(emp => {
+    const rows = walkEmployee(emp, ctx.forEmployee(emp), yearStart, endDate);
+    const opens = openBy[emp.id] || {};
+    const balances = {};
+    types.forEach(t => { balances[t.name] = leaveBalanceFor(rows, t, opens[t.name] || null, yearStart); });
     return {
-      employee_id: emp.id,
-      employee_name: emp.name,
-      hotel_id: emp.hotel_id,
-      earned_this_month: t.earned,
-      used_this_month: t.used,
-      net_change_this_month: t.earned - t.used
+      employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id,
+      balances, comp_off: compLedgerFor(rows, opens["Comp Off"] || null)
     };
-  }).sort((a, b) => a.employee_name.localeCompare(b.employee_name));
+  });
+  return { leave_types: types, year_start: yearStart, end_date: endDate, records };
 }
 
-// Cleans up auto-created placeholder employees (the "Unmapped (00000123)"
-// records the webhook creates for unrecognized punches) once a real
-// employee exists whose machine_user_id matches that placeholder's id.
-// Without this, both records would independently match the same raw
-// punches (by id and by machine_user_id respectively), double-counting
-// that person's attendance. Only removes rows that look like our own
-// auto-generated placeholders — never a real employee whose id happens
-// to coincide with someone else's card number.
-async function mergePlaceholderEmployees() {
-  const allRes = await pool.query("SELECT id, name, machine_user_id FROM employees");
-  const all = allRes.rows;
-  const placeholderPattern = /^Unmapped \(.+\)$/;
-  let merged = 0;
-  for (const emp of all) {
-    if (!emp.machine_user_id || String(emp.machine_user_id) === String(emp.id)) continue;
-    const placeholder = all.find(e =>
-      String(e.id) === String(emp.machine_user_id) &&
-      String(e.id) !== String(emp.id) &&
-      placeholderPattern.test(e.name || "")
-    );
-    if (placeholder) {
-      await pool.query("DELETE FROM employees WHERE id = $1", [placeholder.id]);
-      merged++;
-    }
-  }
-  return merged;
-}
-
-async function findEmployee(code) {
-  const r = await pool.query("SELECT * FROM employees WHERE id = $1 OR machine_user_id = $1", [code]);
-  return r.rows[0] || null;
-}
 
 async function findHotelByName(name) {
   if (!name) return null;
@@ -480,7 +530,7 @@ app.post("/api/hotels", async (req, res) => {
     const body = req.body || {};
     const name = body.name ? String(body.name).trim() : "";
     const rawCode = body.code ? String(body.code).trim() : "";
-    const device_id = body.device_id ? String(body.device_id).trim() : "";
+    const device_id = body.device_id ? String(body.device_id).split(",").map(x => x.trim()).filter(Boolean).join(",") : "";
     if (!name || !rawCode) {
       return res.status(400).json({ status: "error", message: "name and code are required." });
     }
@@ -647,51 +697,29 @@ app.post("/api/biometric/attendance", async (req, res) => {
     console.log("Received biometric punch:", log);
 
     const device_sn = log.device_sn ? String(log.device_sn).trim() : "";
-
-    if (device_sn) {
-      const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-      await pool.query(
-        `UPDATE integrations SET records_received = records_received + 1, last_sync = $1 WHERE device_sn = $2`,
-        [now, device_sn]
-      );
-    }
-
-    // Fully automatic pickup: if this punch's employee_code doesn't match
-    // any known employee yet, create a placeholder employee for them
-    // right now instead of silently dropping the punch, so attendance is
-    // captured from the very first time anyone is seen — no manual import
-    // required. Rename/assign their hotel later as a cosmetic cleanup step.
     const code = log.employee_code ? String(log.employee_code).trim() : "";
-    if (code) {
-      const known = await findEmployee(code);
-      if (!known) {
-        let hotelId = "";
-        if (device_sn) {
-          const h = await pool.query("SELECT id FROM hotels WHERE $1 = ANY(string_to_array(device_id, ','))", [device_sn]);
-          if (h.rows.length) hotelId = h.rows[0].id;
-        }
-        // The device's Card No / User ID field is numeric-only — it
-        // physically cannot contain letters. So only treat this code as
-        // a real machine_user_id if it's purely digits; otherwise it's a
-        // resolved code or name Realtime substituted (for someone without
-        // a proper card number set up there), and machine_user_id should
-        // stay blank rather than store something that isn't really one.
-        const isNumericCardNo = /^\d+$/.test(code);
-        await pool.query(
-          `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id)
-           VALUES ($1, $2, $3, '', 'Active', $4)
-           ON CONFLICT (id) DO NOTHING`,
-          [code, `Unmapped (${code})`, hotelId, isNumericCardNo ? code : ""]
-        );
-      }
+    const log_datetime = log.log_datetime ? String(log.log_datetime).trim() : "";
+    if (!code || !log_datetime) {
+      return res.status(400).json({ status: "error", message: "employee_code and log_datetime are required." });
     }
 
+    // The punch is stored as-is. It is matched to an employee later, by the
+    // employee's id or device card number, whenever attendance is worked
+    // out — so a punch from someone not yet added to HRMS is kept and starts
+    // counting the moment they are added. No placeholder employees are made.
     await pool.query(
       `INSERT INTO attendance_logs (employee_code, log_datetime, log_time, downloaded_at, device_sn, source)
        VALUES ($1, $2, $3, $4, $5, 'webhook')
        ON CONFLICT (employee_code, log_datetime, device_sn) DO NOTHING`,
-      [code, log.log_datetime || "", log.log_time || "", log.downloaded_at || "", device_sn]
+      [code, log_datetime, log.log_time || "", log.downloaded_at || "", device_sn]
     );
+
+    if (device_sn) {
+      const now = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" });
+      await pool.query(
+        `UPDATE hotels SET last_sync = $1, biometric_status = 'Connected'
+         WHERE $2 = ANY(string_to_array(replace(device_id, ' ', ''), ','))`, [now, device_sn]);
+    }
 
     return res.status(200).json({ status: "success", message: "Attendance log synchronized successfully." });
   } catch (error) {
@@ -812,7 +840,7 @@ app.post("/api/attendance/daily-summary/import", async (req, res) => {
 // ---------------------------------------------------------------------
 app.get("/api/employees", async (req, res) => {
   try {
-    const r = await pool.query("SELECT * FROM employees ORDER BY name");
+    const r = await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees ORDER BY id`);
     res.json({ status: "success", records: r.rows });
   } catch (error) {
     console.error("GET /api/employees failed:", error);
@@ -904,21 +932,6 @@ app.delete("/api/employees", async (req, res) => {
   }
 });
 
-// Runs the same placeholder-merge that happens automatically after a
-// bulk import, but on demand — useful if real punches created new
-// "Unmapped" placeholders after your last import and you want to
-// reconcile them without re-uploading the whole employee list.
-app.post("/api/employees/sync-biometric", async (req, res) => {
-  try {
-    const merged = await mergePlaceholderEmployees();
-    const total = await pool.query("SELECT COUNT(*) FROM employees");
-    res.json({ status: "success", merged, total_employees: Number(total.rows[0].count) });
-  } catch (error) {
-    console.error("POST /api/employees/sync-biometric failed:", error);
-    res.status(500).json({ status: "error", message: error.message });
-  }
-});
-
 // Bulk import/update employees — built to accept rows shaped like the
 // Realtime Biometrics employee export (EmpName, Cardno, EmpCode,
 // Dept_Name, Desig_Name, Branch), but works with any rows using these
@@ -929,6 +942,11 @@ app.post("/api/employees/import", async (req, res) => {
     if (!Array.isArray(rows) || !rows.length) {
       return res.status(400).json({ status: "error", message: "rows must be a non-empty array." });
     }
+    const hotelLookup = new Map();
+    (await pool.query("SELECT id, name FROM hotels")).rows.forEach(h => {
+      hotelLookup.set(String(h.id).toLowerCase(), h.id);
+      hotelLookup.set(String(h.name).trim().toLowerCase(), h.id);
+    });
     let created = 0, updated = 0, skipped = 0;
     for (const row of rows) {
       const employee_id = row.employee_id && String(row.employee_id).trim();
@@ -936,6 +954,12 @@ app.post("/api/employees/import", async (req, res) => {
       const salary = row.monthly_salary !== undefined && row.monthly_salary !== "" && !isNaN(Number(row.monthly_salary))
         ? Number(row.monthly_salary) : null;
       const doj = row.date_of_joining ? ymd(row.date_of_joining) : null;
+      // The CSV's Branch column holds a hotel *name*, but employees.hotel_id
+      // stores the hotel's id ("HAAC"). Accept either.
+      let resolvedHotelId = row.hotel_id ? String(row.hotel_id).trim() : "";
+      if (resolvedHotelId) {
+        resolvedHotelId = hotelLookup.get(resolvedHotelId.toLowerCase()) || resolvedHotelId;
+      }
       const existingRes = await pool.query("SELECT * FROM employees WHERE id = $1", [employee_id]);
       if (existingRes.rows.length) {
         await pool.query(
@@ -949,21 +973,20 @@ app.post("/api/employees/import", async (req, res) => {
              date_of_joining = COALESCE($8, date_of_joining),
              property_code = COALESCE(NULLIF($9, ''), property_code)
            WHERE id = $1`,
-          [employee_id, row.name || "", row.machine_user_id || "", row.hotel_id || "", row.role || "", row.status || "", salary, doj, row.property_code || ""]
+          [employee_id, row.name || "", row.machine_user_id || "", resolvedHotelId, row.role || "", row.status || "", salary, doj, row.property_code || ""]
         );
         updated++;
       } else {
         await pool.query(
           `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [employee_id, row.name || "", row.hotel_id || "", row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || ""]
+          [employee_id, row.name || "", resolvedHotelId, row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || ""]
         );
         created++;
       }
     }
-    const merged = await mergePlaceholderEmployees();
     const total = await pool.query("SELECT COUNT(*) FROM employees");
-    res.json({ status: "success", created, updated, skipped, merged, total_employees: Number(total.rows[0].count) });
+    res.json({ status: "success", created, updated, skipped, total_employees: Number(total.rows[0].count) });
   } catch (error) {
     console.error("POST /api/employees/import failed:", error);
     res.status(500).json({ status: "error", message: error.message });
@@ -1030,7 +1053,7 @@ app.get("/api/biometric/unmapped-punches", async (req, res) => {
 app.get("/api/attendance", async (req, res) => {
   try {
     const hotelId = req.query.hotel_id || "all";
-    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const month = req.query.month || todayIst().slice(0, 7);
     const records = await computeAttendance(hotelId, month);
     res.json({ status: "success", month, hotel_id: hotelId, records });
   } catch (error) {
@@ -1068,27 +1091,43 @@ app.post("/api/attendance/override", async (req, res) => {
   }
 });
 
-// Upload/replace duty roster rows. Body: { rows: [{ employee_id, date, type }] }
+// Upload duty roster rows. Body: { rows: [{ employee_id, date, type }] }.
+// A row with a blank type CLEARS that employee's roster entry for that date,
+// so re-uploading a corrected sheet makes the roster match the sheet exactly
+// for the dates it covers. Done in batches, since a month for a whole hotel
+// is thousands of rows.
 app.post("/api/duty-roster", async (req, res) => {
   try {
     const rows = (req.body && req.body.rows) || [];
     if (!Array.isArray(rows) || !rows.length) {
       return res.status(400).json({ status: "error", message: "rows must be a non-empty array of { employee_id, date, type }." });
     }
-    let applied = 0;
+    const upserts = [], clears = [];
+    let skipped = 0;
     for (const row of rows) {
-      const employee_id = row.employee_id && String(row.employee_id).trim();
+      const employee_id = row.employee_id ? String(row.employee_id).trim() : "";
       const date = ymd(row.date);
-      const type = row.type && String(row.type).trim();
-      if (!employee_id || !date || !type) continue;
-      await pool.query(
-        `INSERT INTO duty_roster (employee_id, date, type) VALUES ($1,$2,$3)
-         ON CONFLICT (employee_id, date) DO UPDATE SET type = EXCLUDED.type`,
-        [employee_id, date, type]
-      );
-      applied++;
+      const type = row.type ? String(row.type).trim() : "";
+      if (!employee_id || !date) { skipped++; continue; }
+      (type ? upserts : clears).push([employee_id, date, type]);
     }
-    res.json({ status: "success", applied, skipped: rows.length - applied });
+    const BATCH = 2000;
+    for (let i = 0; i < upserts.length; i += BATCH) {
+      const part = upserts.slice(i, i + BATCH);
+      await pool.query(
+        `INSERT INTO duty_roster (employee_id, date, type)
+         SELECT * FROM unnest($1::text[], $2::date[], $3::text[])
+         ON CONFLICT (employee_id, date) DO UPDATE SET type = EXCLUDED.type`,
+        [part.map(p => p[0]), part.map(p => p[1]), part.map(p => p[2])]);
+    }
+    for (let i = 0; i < clears.length; i += BATCH) {
+      const part = clears.slice(i, i + BATCH);
+      await pool.query(
+        `DELETE FROM duty_roster d USING unnest($1::text[], $2::date[]) AS t(employee_id, date)
+         WHERE d.employee_id = t.employee_id AND d.date = t.date`,
+        [part.map(p => p[0]), part.map(p => p[1])]);
+    }
+    res.json({ status: "success", applied: upserts.length, cleared: clears.length, skipped });
   } catch (error) {
     console.error("POST /api/duty-roster failed:", error);
     res.status(500).json({ status: "error", message: error.message });
@@ -1116,7 +1155,7 @@ app.get("/api/duty-roster", async (req, res) => {
 app.get("/api/payroll", async (req, res) => {
   try {
     const hotelId = req.query.hotel_id || "all";
-    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const month = req.query.month || todayIst().slice(0, 7);
     const records = await computePayroll(hotelId, month);
     res.json({ status: "success", month, hotel_id: hotelId, records });
   } catch (error) {
@@ -1125,15 +1164,183 @@ app.get("/api/payroll", async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------
+// Leaves: policy, opening balances, and live balances
+// ---------------------------------------------------------------------
+app.get("/api/leave-policy", async (req, res) => {
+  try {
+    const types = await pool.query("SELECT name, code, annual_days, paid FROM leave_types ORDER BY name");
+    const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
+    res.json({
+      status: "success",
+      leave_year_start_month: startMonth,
+      records: types.rows.map(t => ({ name: t.name, code: t.code, annual_days: Number(t.annual_days), paid: t.paid }))
+    });
+  } catch (error) {
+    console.error("GET /api/leave-policy failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Body: { rows?: [{ leave_type, code, annual_days, paid }], leave_year_start_month?: 1-12 }
+// When rows are sent they REPLACE the whole policy (the upload is the policy).
+app.post("/api/leave-policy", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const body = req.body || {};
+    const rows = Array.isArray(body.rows) ? body.rows : null;
+    if (body.leave_year_start_month !== undefined) {
+      const mth = Number(body.leave_year_start_month);
+      if (!Number.isInteger(mth) || mth < 1 || mth > 12) {
+        return res.status(400).json({ status: "error", message: "leave_year_start_month must be 1-12." });
+      }
+      await setSetting("leave_year_start_month", mth);
+    }
+    let saved = 0;
+    if (rows && rows.length) {
+      const clean = [], seen = new Set();
+      for (const r of rows) {
+        const name = r.leave_type ? String(r.leave_type).trim() : "";
+        if (!name) continue;
+        if (RESERVED_STATUSES.includes(name.toLowerCase())) {
+          return res.status(400).json({ status: "error", message: `"${name}" is a built-in attendance status and can't be used as a leave type. (Comp Off is handled automatically.)` });
+        }
+        if (seen.has(name.toLowerCase())) continue;
+        seen.add(name.toLowerCase());
+        const days = Number(r.annual_days);
+        if (isNaN(days) || days < 0) {
+          return res.status(400).json({ status: "error", message: `Annual days for "${name}" must be a number, 0 or more.` });
+        }
+        const paidRaw = r.paid === undefined || r.paid === null ? "yes" : String(r.paid).trim().toLowerCase();
+        const paid = !/^(n|no|false|0|unpaid)$/.test(paidRaw);
+        const code = r.code && String(r.code).trim() ? String(r.code).trim().toUpperCase()
+          : name.split(/\s+/).map(w => w[0]).join("").toUpperCase();
+        clean.push([name, code, days, paid]);
+      }
+      if (!clean.length) return res.status(400).json({ status: "error", message: "No valid leave types found in the upload." });
+      await client.query("BEGIN");
+      await client.query("DELETE FROM leave_types");
+      for (const [name, code, days, paid] of clean) {
+        await client.query("INSERT INTO leave_types (name, code, annual_days, paid) VALUES ($1,$2,$3,$4)", [name, code, days, paid]);
+      }
+      await client.query("COMMIT");
+      saved = clean.length;
+    }
+    res.json({ status: "success", saved });
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    console.error("POST /api/leave-policy failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Opening leave balances from the old spreadsheet.
+// Body: { as_of: "YYYY-MM-DD", rows: [{ employee_id, leave_type, balance }] }
+// Balances count from the START of as_of: leaves taken on or after that date
+// are deducted automatically. leave_type may be a policy leave name, its code,
+// or "Comp Off".
+app.post("/api/leave-balances/import", async (req, res) => {
+  try {
+    const as_of = ymd(req.body && req.body.as_of);
+    const rows = (req.body && req.body.rows) || [];
+    if (!as_of) return res.status(400).json({ status: "error", message: "as_of date (YYYY-MM-DD) is required." });
+    if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ status: "error", message: "rows must be a non-empty array." });
+
+    const typeLookup = new Map();
+    (await pool.query("SELECT name, code FROM leave_types")).rows.forEach(t => {
+      typeLookup.set(t.name.toLowerCase(), t.name);
+      if (t.code) typeLookup.set(String(t.code).toLowerCase(), t.name);
+    });
+    ["comp off", "compoff", "comp-off", "co"].forEach(k => typeLookup.set(k, "Comp Off"));
+    const empIds = new Set((await pool.query("SELECT id FROM employees")).rows.map(r => r.id));
+
+    const good = [], unknownEmployees = new Set(), unknownTypes = new Set();
+    let skipped = 0;
+    for (const r of rows) {
+      const employee_id = r.employee_id ? String(r.employee_id).trim() : "";
+      const type = typeLookup.get(String(r.leave_type || "").trim().toLowerCase());
+      const balance = Number(String(r.balance ?? "").replace(/,/g, ""));
+      if (!employee_id || r.balance === "" || r.balance === undefined || isNaN(balance)) { skipped++; continue; }
+      if (!empIds.has(employee_id)) { unknownEmployees.add(employee_id); continue; }
+      if (!type) { unknownTypes.add(String(r.leave_type)); continue; }
+      good.push([employee_id, type, balance]);
+    }
+    const BATCH = 2000;
+    for (let i = 0; i < good.length; i += BATCH) {
+      const part = good.slice(i, i + BATCH);
+      await pool.query(
+        `INSERT INTO leave_balances (employee_id, leave_type, opening_balance, as_of)
+         SELECT e, t, b, $4::date FROM unnest($1::text[], $2::text[], $3::numeric[]) AS x(e, t, b)
+         ON CONFLICT (employee_id, leave_type) DO UPDATE
+           SET opening_balance = EXCLUDED.opening_balance, as_of = EXCLUDED.as_of`,
+        [part.map(p => p[0]), part.map(p => p[1]), part.map(p => p[2]), as_of]);
+    }
+    res.json({
+      status: "success", applied: good.length, skipped,
+      unknown_employees: Array.from(unknownEmployees).slice(0, 30), unknown_employee_count: unknownEmployees.size,
+      unknown_leave_types: Array.from(unknownTypes).slice(0, 10)
+    });
+  } catch (error) {
+    console.error("POST /api/leave-balances/import failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
 // Query params: hotel_id ("all" or a specific id), month ("YYYY-MM").
-app.get("/api/comp-off", async (req, res) => {
+app.get("/api/leaves", async (req, res) => {
   try {
     const hotelId = req.query.hotel_id || "all";
-    const month = req.query.month || new Date().toISOString().slice(0, 7);
-    const records = await computeCompOffLedger(hotelId, month);
-    res.json({ status: "success", month, hotel_id: hotelId, records });
+    const month = req.query.month || todayIst().slice(0, 7);
+    const result = await computeLeaves(hotelId, month);
+    res.json({ status: "success", month, hotel_id: hotelId, ...result });
   } catch (error) {
-    console.error("GET /api/comp-off failed:", error);
+    console.error("GET /api/leaves failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Punches from card numbers that match no employee (grouped, so you can
+// see who still needs adding to HRMS).
+// ---------------------------------------------------------------------
+app.get("/api/biometric/unrecognised", async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT al.employee_code, COUNT(*)::int AS punches, MAX(al.log_datetime) AS last_punch, MAX(al.device_sn) AS device_sn
+      FROM attendance_logs al
+      WHERE al.employee_code <> ''
+        AND NOT EXISTS (SELECT 1 FROM employees e
+                        WHERE e.id = al.employee_code OR (e.machine_user_id <> '' AND e.machine_user_id = al.employee_code))
+      GROUP BY al.employee_code
+      ORDER BY punches DESC, al.employee_code`);
+    const hotels = (await pool.query("SELECT name, device_id FROM hotels")).rows;
+    const records = r.rows.map(row => {
+      const h = hotels.find(x => String(x.device_id || "").split(",").map(s => s.trim()).includes(row.device_sn));
+      return { ...row, hotel_name: h ? h.name : "" };
+    });
+    res.json({ status: "success", records });
+  } catch (error) {
+    console.error("GET /api/biometric/unrecognised failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Permanently deletes stored punches that match no employee. Requires
+// { confirm: true }. Punches of people you add later are never touched.
+app.delete("/api/biometric/unrecognised", async (req, res) => {
+  try {
+    if (!(req.body && req.body.confirm === true)) {
+      return res.status(400).json({ status: "error", message: "Pass { confirm: true } to delete unrecognised punches." });
+    }
+    const r = await pool.query(`
+      DELETE FROM attendance_logs al
+      WHERE NOT EXISTS (SELECT 1 FROM employees e
+                        WHERE e.id = al.employee_code OR (e.machine_user_id <> '' AND e.machine_user_id = al.employee_code))`);
+    res.json({ status: "success", deleted: r.rowCount });
+  } catch (error) {
+    console.error("DELETE /api/biometric/unrecognised failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
 });

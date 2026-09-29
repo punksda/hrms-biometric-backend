@@ -4,19 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Voyage HRMS · HR & Payroll Workspace</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+Pro:wght@600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+Pro:wght@600;700&display=swap" rel="stylesheet">
 <style>
-  :root{--ink:#172033;--muted:#667085;--line:#e6eaf0;--canvas:#f6f8fc;--indigo:#4f46e5}
+  :root{--ink:#172033;--line:#e6eaf0;--canvas:#f6f8fc;--indigo:#4f46e5}
   *{box-sizing:border-box} body{margin:0;font-family:"DM Sans",sans-serif;color:var(--ink);background:var(--canvas)}
   .side-nav{width:258px;background:#171b36}
   .nav-item{transition:.15s}.nav-item:hover,.nav-item.active{background:rgba(255,255,255,.12);color:#fff}
   .panel{border:1px solid var(--line);box-shadow:0 8px 24px rgba(23,32,51,.05)}
-  .tab-view{display:none}.tab-view.active{display:block;animation:rise .2s ease both}
-  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .tab-view{display:none}.tab-view.active{display:block}
   .section-title{font-family:"Source Serif Pro",serif;letter-spacing:-.02em}
   .status-pill{font-size:.72rem;font-weight:700;border-radius:999px;padding:.28rem .62rem;white-space:nowrap;display:inline-block}
   .toast{transform:translateY(120px);opacity:0;transition:.25s}.toast.show{transform:none;opacity:1}
   .table-scroll{overflow:auto}
+  .sheet thead th{position:sticky;top:0;z-index:20;background:#f8fafc}
+  .sheet .sticky-col{position:sticky;left:0;z-index:10}
+  .sheet thead .sticky-col{z-index:30}
   input:focus,select:focus,button:focus{outline:none;border-color:var(--indigo);box-shadow:0 0 0 3px rgba(79,70,229,.15)}
   @media(max-width:900px){.side-nav{display:none}.main-area{width:100%}}
 </style>
@@ -35,16 +37,17 @@
       <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="hotel-network"><i data-lucide="building-2" class="h-4 w-4"></i>Hotel Network</button>
       <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="employees"><i data-lucide="users" class="h-4 w-4"></i>Employees</button>
       <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="attendance"><i data-lucide="calendar-days" class="h-4 w-4"></i>Attendance Register</button>
-      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="biometric"><i data-lucide="fingerprint" class="h-4 w-4"></i>Biometric Devices</button>
-      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="compoff"><i data-lucide="badge-plus" class="h-4 w-4"></i>Comp Off</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="roster"><i data-lucide="calendar-range" class="h-4 w-4"></i>Duty Roster</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="leaves"><i data-lucide="calendar-heart" class="h-4 w-4"></i>Leaves</button>
       <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="payroll"><i data-lucide="wallet-cards" class="h-4 w-4"></i>Payroll</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="biometric"><i data-lucide="fingerprint" class="h-4 w-4"></i>Biometric Devices</button>
     </nav>
     <div class="mt-auto rounded-xl border border-white/10 bg-white/5 p-3 text-xs">
       <span id="side-dot" class="mr-2 inline-block h-2 w-2 rounded-full bg-amber-400"></span><span id="side-status">Checking backend connection</span>
     </div>
   </aside>
   <div class="main-area w-full md:ml-[258px]">
-    <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:px-7">
+    <header class="sticky top-0 z-40 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:px-7">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p class="text-xs font-bold uppercase tracking-[.16em] text-indigo-600">Hospitality operations</p>
@@ -59,10 +62,11 @@
     </header>
     <main class="w-full p-4 md:p-7">
 
+      <!-- OVERVIEW -->
       <section id="overview" class="tab-view active">
         <p class="text-sm font-semibold text-indigo-600">Backend-connected operations</p>
         <h2 class="section-title text-3xl font-bold">A clear view of every property.</h2>
-        <div class="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5" id="kpi-grid"></div>
+        <div class="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" id="kpi-grid"></div>
         <section class="panel mt-6 rounded-2xl bg-white p-6">
           <h3 class="font-bold">Secure sync status</h3>
           <p id="overview-status" class="mt-2 text-sm text-slate-600">Loading…</p>
@@ -70,6 +74,7 @@
         </section>
       </section>
 
+      <!-- HOTEL NETWORK -->
       <section id="hotel-network" class="tab-view">
         <p class="text-sm font-semibold text-indigo-600">Multi-property management</p>
         <h2 class="section-title text-3xl font-bold">Hotel Network</h2>
@@ -97,6 +102,7 @@
         </section>
       </section>
 
+      <!-- EMPLOYEES -->
       <section id="employees" class="tab-view">
         <p class="text-sm font-semibold text-indigo-600">People directory</p>
         <h2 class="section-title text-3xl font-bold">Employees</h2>
@@ -107,93 +113,180 @@
             <button id="import-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Import CSV</button>
             <button id="download-employee-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
             <button id="refresh-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
-            <button id="sync-biometric" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Sync with Biometric</button>
             <button id="delete-all-employees" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete All</button>
           </div>
           <form id="add-employee-form" class="mt-4 hidden rounded-xl border border-indigo-100 bg-indigo-50 p-4">
             <div class="grid gap-3 md:grid-cols-3">
-              <div><label class="mb-1 block text-sm font-semibold">Employee ID</label><input id="new-emp-id" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. VCOR045"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Employee Code</label><input id="new-emp-id" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. VCOR045"></div>
               <div><label class="mb-1 block text-sm font-semibold">Name</label><input id="new-emp-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Hotel</label><select id="new-emp-hotel" class="w-full rounded-lg border p-2.5 text-sm"><option value="">Select hotel</option></select></div>
               <div><label class="mb-1 block text-sm font-semibold">Role</label><input id="new-emp-role" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Monthly Salary</label><input id="new-emp-salary" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Date of Joining</label><input id="new-emp-doj" type="date" class="w-full rounded-lg border p-2.5 text-sm"></div>
-              <div><label class="mb-1 block text-sm font-semibold">Card No / Device User ID <span class="font-normal text-slate-500">(optional, numeric only — this is the biometric device's own ID, not the Employee ID)</span></label><input id="new-emp-card" inputmode="numeric" pattern="[0-9]*" class="w-full rounded-lg border p-2.5 text-sm"></div>
-              <div><label class="mb-1 block text-sm font-semibold">Property Identifier <span class="font-normal text-slate-500">(optional, e.g. VCOR001 — just a reference label, not used for matching)</span></label><input id="new-emp-property-code" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Card No / Device User ID <span class="font-normal text-slate-500">(numbers only — the biometric machine's own ID)</span></label><input id="new-emp-card" inputmode="numeric" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Property Identifier <span class="font-normal text-slate-500">(optional label, e.g. VCOR001)</span></label><input id="new-emp-property-code" class="w-full rounded-lg border p-2.5 text-sm"></div>
             </div>
             <p id="add-employee-error" class="mt-3 hidden text-sm text-red-700"></p>
             <div class="mt-4 flex gap-2"><button id="submit-add-employee" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Save employee</button><button id="cancel-add-employee" type="button" class="rounded-lg border bg-white px-4 py-2.5 text-sm font-bold">Cancel</button></div>
           </form>
           <div id="employee-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No employee records loaded.</div>
           <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[860px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee ID</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Role</th><th class="p-3">Monthly Salary</th><th class="p-3">Date of Joining</th><th class="p-3">Status</th></tr></thead>
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee Code</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Role</th><th class="p-3">Card No</th><th class="p-3">Monthly Salary</th><th class="p-3">Date of Joining</th><th class="p-3">Status</th></tr></thead>
             <tbody id="employee-table"></tbody>
           </table></div>
         </section>
       </section>
 
+      <!-- ATTENDANCE -->
       <section id="attendance" class="tab-view">
         <p class="text-sm font-semibold text-indigo-600">Time &amp; presence</p>
         <h2 class="section-title text-3xl font-bold">Attendance Register</h2>
         <section class="panel mt-6 rounded-2xl bg-white p-5 md:p-6">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div><h3 class="font-bold">Daily attendance matrix</h3><p class="text-xs text-slate-500">Click a cell to edit that day's status.</p></div>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 class="font-bold">Daily attendance</h3>
+              <p class="text-xs text-slate-500">Dates run down, employees run across. Each present day shows first in, last out and total duty hours from the device. Click any cell to mark that day.</p>
+            </div>
             <button id="download-attendance" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
           </div>
+          <div class="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
+            <span class="rounded bg-emerald-100 px-2 py-1 text-emerald-800">Present · device confirmed</span>
+            <span class="rounded bg-red-100 px-2 py-1 text-red-800">Present · no punch on the device</span>
+            <span class="rounded bg-red-100 px-2 py-1 text-red-800">Absent</span>
+            <span class="rounded bg-slate-100 px-2 py-1 text-slate-700">Weekly Off</span>
+            <span class="rounded bg-purple-100 px-2 py-1 text-purple-800">Comp Off</span>
+            <span class="rounded bg-sky-100 px-2 py-1 text-sky-800">Leave</span>
+            <span class="rounded px-2 py-1 ring-2 ring-indigo-500">Manually edited</span>
+          </div>
           <div id="attendance-empty" class="mt-5 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500"></div>
-          <div id="attendance-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[760px] text-left text-sm">
-            <thead id="attendance-table-head" class="bg-slate-50 text-xs uppercase text-slate-500"></thead>
+          <div id="attendance-table-wrap" class="table-scroll mt-5 hidden" style="max-height:72vh"><table class="sheet w-full text-left text-sm">
+            <thead id="attendance-table-head" class="text-xs uppercase text-slate-500"></thead>
             <tbody id="attendance-table"></tbody>
           </table></div>
           <div class="mt-5 border-t pt-4">
-            <details><summary class="cursor-pointer text-sm font-bold text-slate-700">Data tools</summary>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <input id="duty-roster-file" type="file" accept=".csv" class="hidden">
+            <details><summary class="cursor-pointer text-sm font-bold text-slate-700">Import a Realtime "Download Attendance" file for one day</summary>
+              <div class="mt-3 flex flex-wrap items-end gap-3">
+                <div><label class="mb-1 block text-xs font-semibold text-slate-600">Date the file covers</label><input id="daily-attendance-date" type="date" class="rounded-lg border p-2 text-sm"></div>
                 <input id="daily-attendance-file" type="file" accept=".csv" class="hidden">
-                <input id="daily-attendance-date" type="date" class="hidden">
-                <button id="upload-roster" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Upload Duty Roster</button>
-                <button id="import-daily-attendance" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Import Daily Attendance</button>
+                <button id="import-daily-attendance" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">Choose CSV &amp; import</button>
               </div>
             </details>
           </div>
         </section>
       </section>
 
+      <!-- DUTY ROSTER -->
+      <section id="roster" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Scheduling</p>
+        <h2 class="section-title text-3xl font-bold">Duty Roster</h2>
+        <section class="panel mt-6 rounded-2xl bg-white p-5 md:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="max-w-3xl">
+              <h3 class="font-bold">Roster for the selected hotel &amp; month</h3>
+              <p class="mt-1 text-sm text-slate-600">Download the template — it already contains your employees and any roster saved so far — fill in <b>Weekly Off</b> (or <b>WO</b>) for off days and a shift name (or leave blank) for working days, then upload it. The Attendance Register picks it up immediately: scheduled off days show as Weekly Off, and if someone works on a Weekly Off the day is credited as a comp off. A blank cell clears that day.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <input id="roster-file" type="file" accept=".csv" class="hidden">
+              <button id="download-roster-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
+              <button id="upload-roster" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Upload Roster</button>
+            </div>
+          </div>
+          <div id="roster-empty" class="mt-5 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500"></div>
+          <div id="roster-table-wrap" class="table-scroll mt-5 hidden" style="max-height:72vh"><table class="sheet w-full text-left text-sm">
+            <thead id="roster-table-head" class="text-xs uppercase text-slate-500"></thead>
+            <tbody id="roster-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+      <!-- LEAVES -->
+      <section id="leaves" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Time off</p>
+        <h2 class="section-title text-3xl font-bold">Leaves</h2>
+
+        <section class="panel mt-6 rounded-2xl bg-white p-5 md:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="max-w-3xl">
+              <h3 class="font-bold">1 · Leave policy</h3>
+              <p class="mt-1 text-sm text-slate-600">Upload your leave types once. They then appear as options when marking attendance, and every day marked with one is deducted from that employee's balance automatically. Comp Off is calculated by the system and is not part of the policy.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="text-xs font-semibold text-slate-600">Leave year starts in
+                <select id="leave-year-start" class="ml-1 rounded-lg border p-2 text-sm"></select></label>
+              <input id="policy-file" type="file" accept=".csv" class="hidden">
+              <button id="download-policy-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
+              <button id="upload-policy" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Upload Policy</button>
+            </div>
+          </div>
+          <div class="table-scroll mt-4"><table class="w-full min-w-[520px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Leave type</th><th class="p-3">Code</th><th class="p-3">Days per year</th><th class="p-3">Paid?</th></tr></thead>
+            <tbody id="policy-table"></tbody>
+          </table></div>
+        </section>
+
+        <section class="panel mt-6 rounded-2xl bg-white p-5 md:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="max-w-3xl">
+              <h3 class="font-bold">2 · Opening balances &amp; live balances</h3>
+              <p class="mt-1 text-sm text-slate-600">Since you're starting mid-year, upload each employee's balance from your old sheet. Pick the date those balances are as at the <b>start of</b>; leaves and comp offs from that date onward are deducted/added automatically. Balances below are as at the end of the selected month.</p>
+            </div>
+          </div>
+          <div class="mt-4 flex flex-wrap items-end gap-3">
+            <div><label class="mb-1 block text-xs font-semibold text-slate-600">Balances are as at the start of</label><input id="leave-asof" type="date" class="rounded-lg border p-2 text-sm"></div>
+            <input id="balance-file" type="file" accept=".csv" class="hidden">
+            <button id="download-balance-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
+            <button id="upload-balances" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Upload Opening Balances</button>
+            <button id="download-leaves" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+          </div>
+          <div id="leaves-empty" class="mt-5 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">No employees to show.</div>
+          <div id="leaves-table-wrap" class="table-scroll mt-5 hidden" style="max-height:72vh"><table class="sheet w-full text-left text-sm">
+            <thead id="leaves-table-head" class="text-xs uppercase text-slate-500"></thead>
+            <tbody id="leaves-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+      <!-- PAYROLL -->
+      <section id="payroll" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Compensation</p>
+        <h2 class="section-title text-3xl font-bold">Payroll</h2>
+        <section class="panel mt-6 rounded-2xl bg-white p-5">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <p class="max-w-3xl text-sm text-slate-600">Pay = monthly salary ÷ days in the month × paid days. Present, Weekly Off, Comp Off and paid leave are paid; Absent and unpaid leave are not. Days before someone's joining date aren't counted, so a mid-month joiner is pro-rated.</p>
+            <button id="download-payroll" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+          </div>
+          <div id="payroll-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No payroll records loaded.</div>
+          <div id="payroll-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[1080px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Monthly Salary</th><th class="p-3">Present</th><th class="p-3">Absent</th><th class="p-3">Weekly Off</th><th class="p-3">Comp Off</th><th class="p-3">Leave</th><th class="p-3">Payable Days</th><th class="p-3">Per-Day Rate</th><th class="p-3">Gross Pay</th></tr></thead>
+            <tbody id="payroll-table"></tbody>
+          </table></div>
+        </section>
+      </section>
+
+      <!-- BIOMETRIC -->
       <section id="biometric" class="tab-view">
         <p class="text-sm font-semibold text-indigo-600">Devices</p>
         <h2 class="section-title text-3xl font-bold">Biometric Devices</h2>
         <section class="panel mt-6 rounded-2xl bg-white p-5">
-          <p class="text-sm text-slate-500">Live status per property. Actual export configuration lives in Realtime Biometrics itself.</p>
+          <p class="text-sm text-slate-500">Live status per property. The export settings themselves live in Realtime Biometrics.</p>
           <div class="table-scroll mt-4"><table class="w-full min-w-[700px] text-left text-sm">
             <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Hotel</th><th class="p-3">Device Serial</th><th class="p-3">Status</th><th class="p-3">Last Sync</th><th class="p-3">Actions</th></tr></thead>
             <tbody id="biometric-table"></tbody>
           </table></div>
         </section>
-      </section>
-
-      <section id="compoff" class="tab-view">
-        <p class="text-sm font-semibold text-indigo-600">Earned time-off</p>
-        <h2 class="section-title text-3xl font-bold">Comp Off</h2>
-        <p class="mt-1 text-sm text-slate-500">Shows comp-off activity within the selected month only, not a running total-to-date.</p>
         <section class="panel mt-6 rounded-2xl bg-white p-5">
-          <div class="flex justify-end"><button id="download-compoff" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button></div>
-          <div id="compoff-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No comp-off records loaded.</div>
-          <div id="compoff-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[600px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Earned this month</th><th class="p-3">Used this month</th><th class="p-3">Net change</th></tr></thead>
-            <tbody id="compoff-table"></tbody>
-          </table></div>
-        </section>
-      </section>
-
-      <section id="payroll" class="tab-view">
-        <p class="text-sm font-semibold text-indigo-600">Compensation</p>
-        <h2 class="section-title text-3xl font-bold">Payroll</h2>
-        <section class="panel mt-6 rounded-2xl bg-white p-5">
-          <div class="flex justify-end"><button id="download-payroll" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button></div>
-          <div id="payroll-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No payroll records loaded.</div>
-          <div id="payroll-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[980px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Monthly Salary</th><th class="p-3">Present</th><th class="p-3">Absent</th><th class="p-3">Weekly Off</th><th class="p-3">Comp Off</th><th class="p-3">Payable Days</th><th class="p-3">Per-Day Rate</th><th class="p-3">Gross Pay</th></tr></thead>
-            <tbody id="payroll-table"></tbody>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="max-w-3xl"><h3 class="font-bold">Unrecognised card numbers</h3>
+              <p class="mt-1 text-sm text-slate-600">Punches from IDs that don't match any employee yet. They are kept, and start counting the moment you add that person with the matching Card No.</p></div>
+            <div class="flex gap-2">
+              <button id="refresh-unrecognised" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
+              <button id="clear-unrecognised" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete these punches</button>
+            </div>
+          </div>
+          <div id="unrecognised-empty" class="mt-4 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">Every punch matches an employee.</div>
+          <div id="unrecognised-wrap" class="table-scroll mt-4 hidden"><table class="w-full min-w-[640px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">ID on device</th><th class="p-3">Punches</th><th class="p-3">Last punch</th><th class="p-3">Hotel</th><th class="p-3"></th></tr></thead>
+            <tbody id="unrecognised-table"></tbody>
           </table></div>
         </section>
       </section>
@@ -201,333 +294,530 @@
     </main>
   </div>
 </div>
-<div id="toast" class="toast fixed bottom-5 right-5 z-[70] max-w-sm rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" role="status"></div>
+<div id="toast" class="toast fixed bottom-5 right-5 z-[90] max-w-md rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" role="status"></div>
 
 <script>
-const $=id=>document.getElementById(id);
-const API_BASE_URL=""; // same origin — frontend and backend are one service now
-const state={hotels:[],employees:[],attendance:[],payroll:[],compoff:[],selectedHotel:"all",backend:false,
-  counts:{employees:null,attendance:null,payroll:null}};
+const $ = id => document.getElementById(id);
+const API_BASE_URL = ""; // same origin: the dashboard and the API are one service
+const state = { hotels: [], employees: [], attendance: [], roster: [], payroll: [], leaveTypes: [], leaveYearStart: 1,
+  leaves: null, unrecognised: [], selectedHotel: "all", backend: false, counts: { employees: null, attendance: null } };
 
-function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),3600)}
-function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
-function setBackend(ok){state.backend=ok;$("connection-badge").textContent=ok?"Backend connected":"Backend unavailable";$("connection-badge").className=`status-pill ${ok?"bg-emerald-50 text-emerald-700":"bg-red-50 text-red-700"}`;$("side-status").textContent=ok?"Secure backend connected":"Backend connection required";$("side-dot").className=`mr-2 inline-block h-2 w-2 rounded-full ${ok?"bg-emerald-400":"bg-red-400"}`}
-async function request(path,options={}){
-  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);
-  try{
-    const response=await fetch(`${API_BASE_URL}${path}`,{method:options.method||"GET",headers:{"Content-Type":"application/json",...(options.headers||{})},body:options.body?JSON.stringify(options.body):undefined,signal:controller.signal});
-    const data=(response.headers.get("content-type")||"").includes("application/json")?await response.json():{};
-    if(!response.ok){const e=new Error(data.message||`Backend returned ${response.status}`);e.status=response.status;throw e}
+/* ---------- small helpers ---------- */
+let toastTimer;
+function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 5200); }
+function esc(v) { return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c])); }
+const enc = encodeURIComponent;
+const pad2 = n => String(n).padStart(2, "0");
+const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+const norm = s => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+function fmtNum(n) { return Number(n).toFixed(2).replace(/\.?0+$/, ""); }
+function fmtHM(min) { if (min == null) return ""; return `${Math.floor(min / 60)}h ${pad2(min % 60)}m`; }
+function todayLocal() { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function setBackend(ok) {
+  state.backend = ok;
+  $("connection-badge").textContent = ok ? "Backend connected" : "Backend unavailable";
+  $("connection-badge").className = `status-pill ${ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`;
+  $("side-status").textContent = ok ? "Secure backend connected" : "Backend connection required";
+  $("side-dot").className = `mr-2 inline-block h-2 w-2 rounded-full ${ok ? "bg-emerald-400" : "bg-red-400"}`;
+}
+// The free server sleeps when idle and can take about a minute to wake up.
+async function request(path, options = {}) {
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), options.timeout || 90000);
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: options.method || "GET", headers: { "Content-Type": "application/json" },
+      body: options.body ? JSON.stringify(options.body) : undefined, signal: controller.signal });
+    const data = (response.headers.get("content-type") || "").includes("application/json") ? await response.json() : {};
+    if (!response.ok) { const e = new Error(data.message || `Backend returned ${response.status}`); e.status = response.status; throw e; }
     return data;
-  } finally{clearTimeout(timeout)}
+  } finally { clearTimeout(timeout); }
 }
-function errorCopy(e,action){if(e.name==="AbortError")return `${action} timed out.`;return `${action} failed: ${e.message||"check the connection and retry."}`}
-function statusPill(v){const s=String(v||"Not configured");const tone=/connected/i.test(s)?"bg-emerald-50 text-emerald-700":/error|unavailable/i.test(s)?"bg-red-50 text-red-700":"bg-slate-100 text-slate-700";return `<span class="status-pill ${tone}">${esc(s)}</span>`}
-function hotelName(id){const h=state.hotels.find(h=>String(h.id)===String(id));return h?h.name:(id||"—")}
-function escapeCsv(v){const t=String(v??"");return /[",\n\r]/.test(t)?`"${t.replace(/"/g,'""')}"`:t}
-function downloadCsv(rows,filename){if(!rows||!rows.length){toast("No records to export.");return}const headers=[...new Set(rows.flatMap(r=>Object.keys(r)))];const csv=[headers.join(","),...rows.map(r=>headers.map(h=>escapeCsv(r[h])).join(","))].join("\n");const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),0)}
-function loadPapa(){if(window.Papa)return Promise.resolve(window.Papa);if(window.__papaPromise)return window.__papaPromise;window.__papaPromise=new Promise((res,rej)=>{const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js";s.onload=()=>res(window.Papa);s.onerror=()=>rej(new Error("CSV parser failed to load."));document.head.appendChild(s)});return window.__papaPromise}
-function parseCsv(file){return loadPapa().then(Papa=>new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:true,complete:resolve,error:reject})))}
+function errorCopy(e, action) { if (e.name === "AbortError") return `${action} timed out — the server may be waking up, try again.`; return `${action} failed: ${e.message || "check the connection and retry."}`; }
+function statusPill(v) { const s = String(v || "Not configured"); const tone = /connected/i.test(s) ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700"; return `<span class="status-pill ${tone}">${esc(s)}</span>`; }
+function hotelName(id) { const h = state.hotels.find(h => String(h.id) === String(id)); return h ? h.name : (id || "—"); }
+function scopeEmployees() { const r = state.selectedHotel === "all" ? state.employees : state.employees.filter(e => String(e.hotel_id) === state.selectedHotel); return r.slice().sort((a, b) => natural(a.id, b.id)); }
+function selectedMonth() { return $("month-select").value; }
+function monthDates(month) { const [y, m] = month.split("-").map(Number); const n = new Date(y, m, 0).getDate(); return Array.from({ length: n }, (_, i) => `${y}-${pad2(m)}-${pad2(i + 1)}`); }
 
-function populateMonths(){
-  const sel=$("month-select"),now=new Date(),opts=[];
-  for(let i=0;i<12;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);const value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;const label=d.toLocaleString("en-US",{month:"long",year:"numeric"});opts.push(`<option value="${value}">${label}</option>`)}
-  sel.innerHTML=opts.join("");
+/* ---------- CSV in / out (no outside libraries) ---------- */
+function escapeCsv(v) { const t = String(v ?? ""); return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; }
+function downloadCsv(rows, filename) {
+  if (!rows || !rows.length) { toast("Nothing to export yet."); return; }
+  const headers = [...new Set(rows.flatMap(r => Object.keys(r)))];
+  const csv = [headers.map(escapeCsv).join(","), ...rows.map(r => headers.map(h => escapeCsv(r[h])).join(","))].join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" })); // BOM keeps names readable in Excel
+  const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-function selectedMonth(){return $("month-select").value}
-
-function renderKpis(){
-  const scoped=state.selectedHotel==="all"?state.hotels:state.hotels.filter(h=>String(h.id)===state.selectedHotel);
-  const values=[scoped.length,state.counts.employees,state.counts.attendance,state.hotels.length?state.hotels.filter(h=>h.biometric_status==="Connected").length:0,state.counts.payroll];
-  document.querySelectorAll("#kpi-grid article p.mt-2").forEach((el,i)=>el.textContent=values[i]===null?"…":values[i]??0);
+function parseCsvText(text) {
+  text = text.replace(/^\uFEFF/, "");
+  const first = text.split(/\r?\n/, 1)[0] || "";
+  const delim = first.split(";").length > first.split(",").length ? ";" : ",";
+  const rows = []; let row = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; } else field += c; }
+    else if (c === '"') inQ = true;
+    else if (c === delim) { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(field); field = ""; rows.push(row); row = []; }
+    else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  const filled = rows.filter(r => r.some(v => String(v).trim() !== ""));
+  if (!filled.length) return { fields: [], data: [] };
+  const fields = filled[0].map(h => String(h).trim());
+  const data = filled.slice(1).map(r => { const o = {}; fields.forEach((f, i) => { o[f] = r[i] === undefined ? "" : String(r[i]).trim(); }); return o; });
+  return { fields, data };
+}
+const readCsvFile = file => file.text().then(parseCsvText);
+function findCol(fields, aliases) { return fields.find(f => aliases.includes(norm(f))) || null; }
+const ID_ALIASES = ["employeeid", "employeecode", "empcode", "empid", "code", "id"];
+const NAME_ALIASES = ["employeename", "empname", "name"];
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function isoDate(y, m, d) { if (m < 1 || m > 12 || d < 1 || d > 31) return null; const dt = new Date(Date.UTC(y, m - 1, d)); if (dt.getUTCMonth() !== m - 1) return null; return `${y}-${pad2(m)}-${pad2(d)}`; }
+// Excel and Google Sheets often rewrite date headings, so accept the common
+// forms: 2026-09-01, 01/09/2026, 01-09-2026, 1-Sep-2026, 1-Sep-26, 1-Sep.
+function headerToIsoDate(h, defaultYear) {
+  const s = String(h).trim(); let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return isoDate(+m[1], +m[2], +m[3]);
+  if ((m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/))) return isoDate(+m[3], +m[2], +m[1]);
+  if ((m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})$/))) return isoDate(2000 + +m[3], +m[2], +m[1]);
+  if ((m = s.match(/^(\d{1,2})[\s\-\/]([A-Za-z]{3,9})[\s\-\/,]*(\d{2,4})?$/))) {
+    const mon = MONTHS[m[2].slice(0, 3).toLowerCase()]; if (!mon) return null;
+    const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : defaultYear;
+    return isoDate(y, mon, +m[1]);
+  }
+  return null;
 }
 
-async function loadHotels(){
-  try{
-    const data=await request("/api/hotels/status");
-    state.hotels=data.records||[];
-    state.counts.employees=data.employees_count??null;
-    state.counts.attendance=data.attendance_records??null;
-    state.counts.payroll=data.payroll_records??null;
+/* ---------- overview & hotels ---------- */
+function renderKpis() {
+  const scoped = state.selectedHotel === "all" ? state.hotels : state.hotels.filter(h => String(h.id) === state.selectedHotel);
+  const values = [scoped.length, state.counts.employees, state.counts.attendance, state.hotels.filter(h => h.biometric_status === "Connected").length];
+  document.querySelectorAll("#kpi-grid article p.mt-2").forEach((el, i) => { el.textContent = values[i] === null ? "…" : values[i] ?? 0; });
+}
+async function loadHotels() {
+  try {
+    const data = await request("/api/hotels/status");
+    state.hotels = data.records || [];
+    state.counts.employees = data.employees_count ?? null;
+    state.counts.attendance = data.attendance_records ?? null;
     setBackend(true);
-    const opts=state.hotels.map(h=>`<option value="${esc(h.id)}">${esc(h.code||h.id)} · ${esc(h.name)}</option>`).join("");
-    $("hotel-filter").innerHTML=`<option value="all">All Hotels</option>${opts}`;
-    $("hotel-filter").value=state.selectedHotel;
-    populateEmployeeHotelSelect();
-    renderHotelTable();renderBiometricTable();renderKpis();
-  }catch(e){setBackend(false);$("hotel-table").innerHTML=`<tr><td colspan="6" class="p-8 text-center text-red-700">Backend unavailable.</td></tr>`}
+    const opts = state.hotels.slice().sort((a, b) => natural(a.name, b.name)).map(h => `<option value="${esc(h.id)}">${esc(h.code || h.id)} · ${esc(h.name)}</option>`).join("");
+    $("hotel-filter").innerHTML = `<option value="all">All Hotels</option>${opts}`;
+    $("hotel-filter").value = state.selectedHotel;
+    $("new-emp-hotel").innerHTML = `<option value="">Select hotel</option>` + state.hotels.map(h => `<option value="${esc(h.id)}">${esc(h.code || h.id)} · ${esc(h.name)}</option>`).join("");
+    renderHotelTable(); renderBiometricTable(); renderKpis();
+  } catch (e) { setBackend(false); $("hotel-table").innerHTML = `<tr><td colspan="6" class="p-8 text-center text-red-700">Backend unavailable. ${esc(errorCopy(e, "Load hotels"))}</td></tr>`; }
 }
-function renderHotelTable(){
-  const rows=state.selectedHotel==="all"?state.hotels:state.hotels.filter(h=>String(h.id)===state.selectedHotel);
-  $("hotel-table").innerHTML=rows.length?rows.map(h=>`<tr class="border-t"><td class="p-3 font-bold">${esc(h.name)}<span class="block text-xs text-slate-500">${esc(h.code||"")}</span></td><td class="p-3">${esc(h.device_id||"—")}</td><td class="p-3">${statusPill(h.attendance_status)}</td><td class="p-3">${statusPill(h.biometric_status)}</td><td class="p-3">${esc(h.last_sync||"No records")}</td><td class="p-3"><button class="hotel-test rounded border px-2 py-1 text-xs font-bold" data-id="${esc(h.id)}">Test biometric</button></td></tr>`).join(""):`<tr><td colspan="6" class="p-8 text-center text-slate-500">No hotels yet.</td></tr>`;
-  document.querySelectorAll(".hotel-test").forEach(b=>b.onclick=()=>hotelBiometricTest(b.dataset.id));
+function scopedHotels() { return state.selectedHotel === "all" ? state.hotels : state.hotels.filter(h => String(h.id) === state.selectedHotel); }
+function renderHotelTable() {
+  const rows = scopedHotels();
+  $("hotel-table").innerHTML = rows.length ? rows.map(h => `<tr class="border-t"><td class="p-3 font-bold">${esc(h.name)}<span class="block text-xs font-normal text-slate-500">${esc(h.code || "")}</span></td><td class="p-3">${esc(h.device_id || "—")}</td><td class="p-3">${statusPill(h.attendance_status)}</td><td class="p-3">${statusPill(h.biometric_status)}</td><td class="p-3">${esc(h.last_sync || "No records")}</td><td class="p-3"><button class="hotel-test rounded border px-2 py-1 text-xs font-bold" data-id="${esc(h.id)}">Test biometric</button></td></tr>`).join("") : `<tr><td colspan="6" class="p-8 text-center text-slate-500">No hotels yet.</td></tr>`;
+  document.querySelectorAll(".hotel-test").forEach(b => b.onclick = () => hotelBiometricTest(b.dataset.id));
 }
-function renderBiometricTable(){
-  const rows=state.selectedHotel==="all"?state.hotels:state.hotels.filter(h=>String(h.id)===state.selectedHotel);
-  $("biometric-table").innerHTML=rows.length?rows.map(h=>`<tr class="border-t"><td class="p-3 font-bold">${esc(h.name)}</td><td class="p-3">${esc(h.device_id||"—")}</td><td class="p-3">${statusPill(h.biometric_status)}</td><td class="p-3">${esc(h.last_sync||"No records")}</td><td class="p-3"><button class="bio-test rounded border px-2 py-1 text-xs font-bold" data-id="${esc(h.id)}">Test</button></td></tr>`).join(""):`<tr><td colspan="5" class="p-8 text-center text-slate-500">No hotels yet.</td></tr>`;
-  document.querySelectorAll(".bio-test").forEach(b=>b.onclick=()=>hotelBiometricTest(b.dataset.id));
+function renderBiometricTable() {
+  const rows = scopedHotels();
+  $("biometric-table").innerHTML = rows.length ? rows.map(h => `<tr class="border-t"><td class="p-3 font-bold">${esc(h.name)}</td><td class="p-3">${esc(h.device_id || "—")}</td><td class="p-3">${statusPill(h.biometric_status)}</td><td class="p-3">${esc(h.last_sync || "No records")}</td><td class="p-3"><button class="bio-test rounded border px-2 py-1 text-xs font-bold" data-id="${esc(h.id)}">Test</button></td></tr>`).join("") : `<tr><td colspan="5" class="p-8 text-center text-slate-500">No hotels yet.</td></tr>`;
+  document.querySelectorAll(".bio-test").forEach(b => b.onclick = () => hotelBiometricTest(b.dataset.id));
 }
-async function hotelBiometricTest(id){try{await request(`/api/hotels/${encodeURIComponent(id)}/biometric/test`,{method:"POST"});toast("Backend confirmed biometric test.");await loadHotels()}catch(e){toast(errorCopy(e,"Test biometric"))}}
-
-function toggleAddHotelForm(open){const f=$("add-hotel-form");f.classList.toggle("hidden",!open);if(!open){f.reset();$("add-hotel-error").classList.add("hidden")}}
-async function addHotel(ev){
+async function hotelBiometricTest(id) { try { await request(`/api/hotels/${enc(id)}/biometric/test`, { method: "POST" }); toast("Backend confirmed biometric test."); await loadHotels(); } catch (e) { toast(errorCopy(e, "Test biometric")); } }
+function toggleAddHotelForm(open) { const f = $("add-hotel-form"); f.classList.toggle("hidden", !open); if (!open) { f.reset(); $("add-hotel-error").classList.add("hidden"); } }
+async function addHotel(ev) {
   ev.preventDefault();
-  const name=$("new-hotel-name").value.trim(),code=$("new-hotel-code").value.trim(),device_id=$("new-hotel-device").value.trim(),err=$("add-hotel-error"),btn=$("submit-add-hotel");
-  if(!name||!code){err.textContent="Name and code are required.";err.classList.remove("hidden");return}
-  err.classList.add("hidden");btn.disabled=true;btn.textContent="Saving…";
-  try{await request("/api/hotels",{method:"POST",body:{name,code,device_id}});toast(`Hotel ${name} added.`);toggleAddHotelForm(false);await loadHotels()}
-  catch(e){err.textContent=e.message||errorCopy(e,"Add hotel");err.classList.remove("hidden")}
-  finally{btn.disabled=false;btn.textContent="Save hotel"}
+  const name = $("new-hotel-name").value.trim(), code = $("new-hotel-code").value.trim(), device_id = $("new-hotel-device").value.trim(), err = $("add-hotel-error"), btn = $("submit-add-hotel");
+  if (!name || !code) { err.textContent = "Name and code are required."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
+  try { await request("/api/hotels", { method: "POST", body: { name, code, device_id } }); toast(`Hotel ${name} added.`); toggleAddHotelForm(false); await loadHotels(); }
+  catch (e) { err.textContent = e.message || errorCopy(e, "Add hotel"); err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Save hotel"; }
 }
 
-function renderEmployees(){
-  const rows=state.selectedHotel==="all"?state.employees:state.employees.filter(e=>String(e.hotel_id)===state.selectedHotel);
-  const empty=$("employee-empty"),wrap=$("employee-table-wrap");
-  if(!rows.length){empty.textContent="No employee records loaded.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
-  empty.classList.add("hidden");wrap.classList.remove("hidden");
-  $("employee-table").innerHTML=rows.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code?`<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>`:""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role||"—")}</td><td class="p-3">${r.monthly_salary?Number(r.monthly_salary).toLocaleString():"—"}</td><td class="p-3">${esc(r.date_of_joining||"—")}</td><td class="p-3">${esc(r.status||"—")}</td></tr>`).join("");
+/* ---------- employees ---------- */
+function renderEmployees() {
+  const rows = scopeEmployees(), empty = $("employee-empty"), wrap = $("employee-table-wrap");
+  if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  $("employee-table").innerHTML = rows.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${esc(r.status || "—")}</td></tr>`).join("");
 }
-function toggleAddEmployeeForm(open){const f=$("add-employee-form");f.classList.toggle("hidden",!open);if(!open){f.reset();$("add-employee-error").classList.add("hidden")}}
-function populateEmployeeHotelSelect(){$("new-emp-hotel").innerHTML=`<option value="">Select hotel</option>`+state.hotels.map(h=>`<option value="${esc(h.id)}">${esc(h.code||h.id)} · ${esc(h.name)}</option>`).join("")}
-async function addEmployee(ev){
+async function loadEmployees() { try { const data = await request("/api/employees"); state.employees = data.records || []; renderEmployees(); } catch (e) { toast(errorCopy(e, "Load employees")); } }
+function toggleAddEmployeeForm(open) { const f = $("add-employee-form"); f.classList.toggle("hidden", !open); if (!open) { f.reset(); $("add-employee-error").classList.add("hidden"); } }
+async function addEmployee(ev) {
   ev.preventDefault();
-  const id=$("new-emp-id").value.trim(),name=$("new-emp-name").value.trim(),cardNo=$("new-emp-card").value.trim(),err=$("add-employee-error"),btn=$("submit-add-employee");
-  if(!id||!name){err.textContent="Employee ID and Name are required.";err.classList.remove("hidden");return}
-  if(cardNo&&!/^\d+$/.test(cardNo)){err.textContent="Card No / Device User ID must contain numbers only — that's a limit of the biometric device itself.";err.classList.remove("hidden");return}
-  err.classList.add("hidden");btn.disabled=true;btn.textContent="Saving…";
-  try{
-    await request("/api/employees",{method:"POST",body:{
-      id,name,
-      hotel_id:$("new-emp-hotel").value,
-      role:$("new-emp-role").value.trim(),
-      monthly_salary:$("new-emp-salary").value||0,
-      date_of_joining:$("new-emp-doj").value||null,
-      machine_user_id:cardNo,
-      property_code:$("new-emp-property-code").value.trim()
-    }});
-    toast(`Employee ${name} added.`);toggleAddEmployeeForm(false);await loadEmployees();
-  }catch(e){err.textContent=e.message||errorCopy(e,"Add employee");err.classList.remove("hidden")}
-  finally{btn.disabled=false;btn.textContent="Save employee"}
+  const id = $("new-emp-id").value.trim(), name = $("new-emp-name").value.trim(), cardNo = $("new-emp-card").value.trim(), err = $("add-employee-error"), btn = $("submit-add-employee");
+  if (!id || !name) { err.textContent = "Employee Code and Name are required."; err.classList.remove("hidden"); return; }
+  if (cardNo && !/^\d+$/.test(cardNo)) { err.textContent = "Card No / Device User ID must be numbers only — that's a limit of the biometric machine itself."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    await request("/api/employees", { method: "POST", body: { id, name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(),
+      monthly_salary: $("new-emp-salary").value || 0, date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim() } });
+    toast(`Employee ${name} added.`); toggleAddEmployeeForm(false); await loadEmployees(); await loadHotels();
+  } catch (e) { err.textContent = e.message || errorCopy(e, "Add employee"); err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Save employee"; }
 }
-async function loadEmployees(){try{const data=await request("/api/employees");state.employees=data.records||[];renderEmployees()}catch(e){toast(errorCopy(e,"Load employees"))}}
-async function deleteAllEmployees(){
-  const count=state.employees.length;
-  if(!count){toast("There are no employees to delete.");return}
-  const typed=prompt(`This permanently deletes all ${count} employee records (their attendance history stays, but becomes unattributed until re-imported or re-matched). Type DELETE to confirm.`);
-  if(typed!=="DELETE"){toast("Cancelled — nothing was deleted.");return}
-  try{
-    const result=await request("/api/employees",{method:"DELETE",body:{confirm:true}});
-    toast(`Deleted ${result.deleted} employee records.`);
-    await loadEmployees();await loadHotels();
-  }catch(e){toast(errorCopy(e,"Delete all employees"))}
+async function deleteAllEmployees() {
+  const count = state.employees.length;
+  if (!count) { toast("There are no employees to delete."); return; }
+  const typed = prompt(`This permanently deletes all ${count} employee records. Their punches stay stored and will count again if you re-add them. Type DELETE to confirm.`);
+  if (typed !== "DELETE") { toast("Cancelled — nothing was deleted."); return; }
+  try { const r = await request("/api/employees", { method: "DELETE", body: { confirm: true } }); toast(`Deleted ${r.deleted} employee records.`); await loadEmployees(); await loadHotels(); }
+  catch (e) { toast(errorCopy(e, "Delete all employees")); }
 }
-function downloadEmployeeTemplate(){
-  // EmpName, Cardno, EmpCode, Desig_Name, Branch are required (matches
-  // the Realtime Biometrics export format). Monthly Salary, Date of
-  // Joining, and Property ID are optional — leave them blank or drop
-  // the columns entirely if you don't have that data yet.
-  downloadCsv([{
-    EmpName:"Asha Rao",
-    Cardno:"00000123",
-    EmpCode:"VCOR045",
-    Desig_Name:"Front Desk Executive",
-    Branch:"Hotel Alpine Abode Continental",
-    "Monthly Salary":"25000",
-    "Date of Joining":"2026-01-15",
-    "Property ID":"VCOR045"
-  }],"employee-import-template.csv");
+function downloadEmployeeTemplate() {
+  downloadCsv([{ EmpName: "Asha Rao", Cardno: "00000123", EmpCode: "VCOR045", Desig_Name: "Front Desk Executive", Branch: "Hotel Alpine Abode Continental",
+    "Monthly Salary": "25000", "Date of Joining": "2026-01-15", "Property ID": "VCOR045" }], "employee-import-template.csv");
 }
-async function importEmployees(file){
-  try{
-    const parsed=await parseCsv(file);
-    if(parsed.errors?.length)throw new Error(parsed.errors[0].message);
-    const need=["EmpName","Cardno","EmpCode","Desig_Name","Branch"];
-    if(need.some(h=>!parsed.meta.fields?.includes(h)))throw new Error(`CSV must include ${need.join(", ")} columns.`);
-    const hasSalary=parsed.meta.fields?.includes("Monthly Salary");
-    const hasDoj=parsed.meta.fields?.includes("Date of Joining");
-    const hasPropertyCode=parsed.meta.fields?.includes("Property ID");
-    const rows=(parsed.data||[]).filter(r=>Object.values(r).some(v=>String(v??"").trim())).map(r=>({
-      employee_id:String(r.EmpCode||"").trim(),
-      name:String(r.EmpName||"").trim(),
-      machine_user_id:String(r.Cardno||"").trim(),
-      role:String(r.Desig_Name||"").trim(),
-      hotel_id:String(r.Branch||"").trim(),
-      monthly_salary:hasSalary?String(r["Monthly Salary"]||"").trim():undefined,
-      date_of_joining:hasDoj?String(r["Date of Joining"]||"").trim():undefined,
-      property_code:hasPropertyCode?String(r["Property ID"]||"").trim():undefined
-    }));
-    const result=await request("/api/employees/import",{method:"POST",body:{rows}});
-    toast(`Imported: ${result.created} created, ${result.updated} updated${result.merged?`, ${result.merged} biometric placeholder(s) merged`:""}.`);
-    await loadEmployees();
-  }catch(e){toast(e.message||errorCopy(e,"Import employees"))}finally{$("employees-file").value=""}
-}
-async function syncBiometric(){
-  try{
-    const result=await request("/api/employees/sync-biometric",{method:"POST"});
-    toast(result.merged?`Merged ${result.merged} placeholder employee(s) into their real records.`:"Nothing to merge — no placeholders matched a real employee yet.");
-    await loadEmployees();
-  }catch(e){toast(errorCopy(e,"Sync with biometric data"))}
+async function importEmployees(file) {
+  try {
+    const { fields, data } = await readCsvFile(file);
+    const c = {
+      id: findCol(fields, ["empcode", "employeecode", "employeeid", "empid", "id"]), name: findCol(fields, NAME_ALIASES),
+      card: findCol(fields, ["cardno", "cardnumber", "deviceuserid", "machineuserid", "userid"]),
+      role: findCol(fields, ["designame", "designation", "role", "position"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
+      salary: findCol(fields, ["monthlysalary", "salary"]), doj: findCol(fields, ["dateofjoining", "doj", "joiningdate"]), prop: findCol(fields, ["propertyid", "propertycode"]) };
+    if (!c.id || !c.name) throw new Error("The CSV needs at least an EmpCode and an EmpName column. Use “Download Template” for the layout.");
+    const bad = c.card ? data.filter(r => r[c.card] && !/^\d+$/.test(r[c.card])).length : 0;
+    const rows = data.filter(r => r[c.id]).map(r => ({
+      employee_id: r[c.id], name: r[c.name],
+      machine_user_id: c.card && /^\d+$/.test(r[c.card] || "") ? r[c.card] : "",
+      role: c.role ? r[c.role] : "", hotel_id: c.hotel ? r[c.hotel] : "",
+      monthly_salary: c.salary ? r[c.salary].replace(/,/g, "") : undefined, date_of_joining: c.doj ? headerToIsoDate(r[c.doj], new Date().getFullYear()) || r[c.doj] : undefined,
+      property_code: c.prop ? r[c.prop] : undefined }));
+    if (!rows.length) throw new Error("No employee rows found in that file.");
+    const r = await request("/api/employees/import", { method: "POST", body: { rows } });
+    toast(`Imported: ${r.created} added, ${r.updated} updated${bad ? `. ${bad} Card No value(s) contained letters and were skipped` : ""}.`);
+    await loadEmployees(); await loadHotels();
+  } catch (e) { toast(e.message || errorCopy(e, "Import employees")); } finally { $("employees-file").value = ""; }
 }
 
-function statusToneClass(status,punches){
-  if(status==="Absent")return "bg-red-100 text-red-800";
-  if(status==="Weekly Off")return "bg-slate-100 text-slate-700";
-  if(status==="Comp Off")return "bg-purple-100 text-purple-800";
-  if(status&&status.indexOf("Present")===0){
-    // Marked present, but does the biometric device agree? No punch that
-    // day = red flag (marked present without device confirmation);
-    // any punch = green (confirmed by the device).
-    return (punches>0)?"bg-emerald-100 text-emerald-800":"bg-red-100 text-red-800";
+/* ---------- attendance register ---------- */
+const isLeave = s => state.leaveTypes.some(t => t.name === s);
+const leaveCode = s => { const t = state.leaveTypes.find(t => t.name === s); return t ? t.code : null; };
+function toneClass(status, punches) {
+  if (status === "Absent") return "bg-red-100 text-red-800";
+  if (status === "Weekly Off") return "bg-slate-100 text-slate-700";
+  if (status === "Comp Off") return "bg-purple-100 text-purple-800";
+  if (isLeave(status)) return "bg-sky-100 text-sky-800";
+  if (status.indexOf("Present") === 0) return punches > 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"; // no punch on the device = red
+  return "bg-white text-slate-500";
+}
+function cellHtml(r, id, date) {
+  const s = r.status, present = s.indexOf("Present") === 0;
+  let extra = "";
+  if (present) {
+    const hours = r.duty_minutes != null ? fmtHM(r.duty_minutes) : (r.punches ? "no check-out" : "no punch on device");
+    extra = `<span class="block text-[11px] font-normal">${esc(r.in_time || "—")} → ${esc(r.out_time || "—")}</span><span class="block text-[11px] font-semibold">${esc(hours)}</span>`;
   }
-  return "bg-white text-slate-400";
+  const label = leaveCode(s) || s;
+  return `<td class="border-l"><button type="button" title="${esc(s)}" class="attendance-cell min-h-[52px] w-full p-2 text-left text-xs font-semibold ${toneClass(s, r.punches)} ${r.overridden ? "ring-2 ring-inset ring-indigo-500" : ""}" data-employee="${esc(id)}" data-date="${date}">${esc(label)}${extra}</button></td>`;
 }
-let attendanceByKey=new Map(), attendanceEmployees=[];
-function renderAttendance(){
-  const empty=$("attendance-empty"),wrap=$("attendance-table-wrap");
-  if(state.selectedHotel==="all"){empty.textContent="Select one hotel from the header dropdown to view and edit attendance.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
-  if(!state.attendance.length){empty.textContent="No attendance records for this hotel and month yet.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
-  empty.classList.add("hidden");wrap.classList.remove("hidden");
-  attendanceByKey=new Map();attendanceEmployees=[...new Map(state.attendance.map(r=>[r.employee_id,r.employee_name])).entries()];
-  state.attendance.forEach(r=>attendanceByKey.set(`${r.employee_id}|${r.date}`,r));
-  const [year,month]=selectedMonth().split("-").map(Number);
-  const days=new Date(year,month,0).getDate();
-  $("attendance-table-head").innerHTML=`<tr><th class="sticky left-0 z-10 bg-slate-50 p-3">Date</th>${attendanceEmployees.map(([id,name])=>`<th class="min-w-[130px] p-3">${esc(name)}</th>`).join("")}</tr>`;
-  const rows=[];
-  for(let d=1;d<=days;d++){
-    const date=`${year}-${String(month).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const cells=attendanceEmployees.map(([id])=>{
-      const r=attendanceByKey.get(`${id}|${date}`),status=r?.status||"",punches=r?.punches||0;
-      if(!r)return `<td class="p-2 text-center text-slate-300">·</td>`;
-      const punchNote=status.indexOf("Present")===0?`<span class="block text-[10px] opacity-70">${punches} punch${punches===1?"":"es"}</span>`:"";
-      return `<td><button type="button" class="attendance-cell min-h-[44px] w-full p-2 text-left text-xs ${statusToneClass(status,punches)} ${r.overridden?"ring-2 ring-indigo-500":""}" data-employee="${esc(id)}" data-date="${date}">${esc(status)}${punchNote}</button></td>`;
-    }).join("");
-    rows.push(`<tr class="border-t"><th class="sticky left-0 z-10 whitespace-nowrap bg-white p-3 font-semibold">${date}</th>${cells}</tr>`);
-  }
-  $("attendance-table").innerHTML=rows.join("");
-  document.querySelectorAll(".attendance-cell").forEach(cell=>cell.onclick=()=>openAttendancePicker(cell));
+let attendanceIndex = new Map();
+function renderAttendance() {
+  const empty = $("attendance-empty"), wrap = $("attendance-table-wrap");
+  if (state.selectedHotel === "all") { empty.textContent = "Choose one hotel in the header to see its attendance sheet."; empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  if (!state.attendance.length) { empty.textContent = "No attendance yet for this hotel and month. Add employees (with their Card No) and punches will appear here."; empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  attendanceIndex = new Map(state.attendance.map(r => [`${r.employee_id}|${r.date}`, r]));
+  const emps = [...new Map(state.attendance.map(r => [r.employee_id, r.employee_name])).entries()].sort((a, b) => natural(a[0], b[0]));
+  $("attendance-table-head").innerHTML = `<tr><th class="sticky-col min-w-[96px] bg-slate-50 p-3">Date</th>${emps.map(([id, name]) => `<th class="min-w-[150px] border-l p-3"><span class="block text-slate-800">${esc(id)}</span><span class="block font-normal normal-case text-slate-500">${esc(name)}</span></th>`).join("")}</tr>`;
+  $("attendance-table").innerHTML = monthDates(selectedMonth()).map(date => {
+    const d = new Date(date + "T00:00:00");
+    const cells = emps.map(([id]) => { const r = attendanceIndex.get(`${id}|${date}`); return r ? cellHtml(r, id, date) : `<td class="border-l p-2 text-center text-slate-300">·</td>`; }).join("");
+    return `<tr class="border-t"><th class="sticky-col whitespace-nowrap bg-white p-3 font-semibold">${date.slice(8)} <span class="text-xs font-normal text-slate-500">${d.toLocaleDateString("en-GB", { weekday: "short" })}</span></th>${cells}</tr>`;
+  }).join("");
+  document.querySelectorAll(".attendance-cell").forEach(cell => cell.onclick = () => openPicker(cell));
 }
-function openAttendancePicker(cell){
-  document.querySelectorAll(".attendance-picker").forEach(x=>x.remove());
-  const picker=document.createElement("div");
-  picker.className="attendance-picker absolute z-50 rounded-lg border bg-white p-2 shadow-xl";
-  picker.innerHTML=["Present","Present (Incomplete)","Present (Worked Weekly Off)","Weekly Off","Comp Off","Absent"].map(s=>`<button type="button" class="block w-full rounded px-2 py-1 text-left text-xs hover:bg-indigo-50" data-status="${s}">${s}</button>`).join("")+`<button type="button" class="mt-1 block w-full border-t pt-1 text-left text-xs text-slate-500" data-status="">Reset to computed</button>`;
-  cell.parentElement.style.position="relative";
-  cell.parentElement.appendChild(picker);
-  picker.querySelectorAll("button").forEach(b=>b.onclick=()=>saveOverride(cell,b.dataset.status,picker));
-  setTimeout(()=>document.addEventListener("click",function close(e){if(!picker.contains(e.target)&&e.target!==cell){picker.remove();document.removeEventListener("click",close)}}),0);
+function closePickers() { document.querySelectorAll(".attendance-picker").forEach(x => x.remove()); }
+function openPicker(cell) {
+  closePickers();
+  const options = ["Present", "Absent", "Weekly Off", "Comp Off", "Present (Worked Weekly Off)", ...state.leaveTypes.map(t => t.name)];
+  const picker = document.createElement("div");
+  picker.className = "attendance-picker fixed z-[80] max-h-80 min-w-[200px] overflow-auto rounded-lg border bg-white p-2 text-sm shadow-xl";
+  picker.innerHTML = options.map(s => `<button type="button" class="block w-full rounded px-2 py-1.5 text-left hover:bg-indigo-50" data-status="${esc(s)}">${esc(s)}${leaveCode(s) ? ` <span class="text-xs text-slate-500">(${esc(leaveCode(s))})</span>` : ""}</button>`).join("")
+    + `<button type="button" class="mt-1 block w-full border-t px-2 pt-2 text-left text-xs text-slate-500" data-status="">Reset to what the device shows</button>`;
+  document.body.appendChild(picker);
+  const rect = cell.getBoundingClientRect();
+  let top = rect.bottom + 4; if (top + picker.offsetHeight > window.innerHeight - 8) top = Math.max(8, rect.top - picker.offsetHeight - 4);
+  picker.style.top = top + "px"; picker.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - picker.offsetWidth - 8)) + "px";
+  picker.querySelectorAll("button").forEach(b => b.onclick = () => saveOverride(cell, b.dataset.status));
 }
-async function saveOverride(cell,status,picker){
-  const employee_id=cell.dataset.employee,date=cell.dataset.date;
-  try{
-    await request("/api/attendance/override",{method:"POST",body:{employee_id,date,status}});
-    picker.remove();
-    toast(status?"Attendance updated.":"Reset to computed value.");
-    await loadAttendance();
-  }catch(e){toast(errorCopy(e,"Update attendance"))}
+async function saveOverride(cell, status) {
+  closePickers();
+  try { await request("/api/attendance/override", { method: "POST", body: { employee_id: cell.dataset.employee, date: cell.dataset.date, status } }); toast(status ? `Marked ${status}.` : "Reset to what the device shows."); await loadAttendance(); }
+  catch (e) { toast(errorCopy(e, "Update attendance")); }
 }
-async function loadAttendance(){
-  if(state.selectedHotel==="all"){state.attendance=[];renderAttendance();return}
-  try{const data=await request(`/api/attendance?hotel_id=${encodeURIComponent(state.selectedHotel)}&month=${encodeURIComponent(selectedMonth())}`);state.attendance=data.records||[];renderAttendance()}
-  catch(e){toast(errorCopy(e,"Load attendance"))}
+async function loadAttendance() {
+  if (state.selectedHotel === "all") { state.attendance = []; renderAttendance(); return; }
+  try { const data = await request(`/api/attendance?hotel_id=${enc(state.selectedHotel)}&month=${enc(selectedMonth())}`); state.attendance = data.records || []; renderAttendance(); }
+  catch (e) { toast(errorCopy(e, "Load attendance")); }
 }
-async function uploadRoster(file){
-  try{
-    const parsed=await parseCsv(file);
-    const need=["employee_id","date","type"];
-    if(need.some(h=>!parsed.meta.fields?.includes(h)))throw new Error(`CSV must include ${need.join(", ")} columns.`);
-    const rows=(parsed.data||[]).filter(r=>r.employee_id).map(r=>({employee_id:String(r.employee_id).trim(),date:String(r.date).trim(),type:String(r.type).trim()}));
-    const result=await request("/api/duty-roster",{method:"POST",body:{rows}});
-    toast(`Roster uploaded: ${result.applied} rows applied.`);await loadAttendance();
-  }catch(e){toast(e.message||errorCopy(e,"Upload roster"))}finally{$("duty-roster-file").value=""}
+function exportAttendance() {
+  downloadCsv(state.attendance.map(r => ({ employee_code: r.employee_id, employee_name: r.employee_name, date: r.date, status: r.status,
+    in_time: r.in_time || "", out_time: r.out_time || "", duty_hours: r.duty_minutes != null ? (r.duty_minutes / 60).toFixed(2) : "",
+    device_punches: r.punches, shift: r.shift || "", manually_edited: r.overridden ? "Yes" : "No" })), `attendance-${selectedMonth()}.csv`);
 }
-async function importDailyAttendance(file){
-  const date=$("daily-attendance-date").value;
-  if(!date){toast("Pick the attendance date first.");return}
-  try{
-    const parsed=await parseCsv(file);
-    const need=["Employee Code","Employee Name","Branch","In Time","Out-Time"];
-    if(need.some(h=>!parsed.meta.fields?.includes(h)))throw new Error(`CSV must include ${need.join(", ")} columns.`);
-    const rows=(parsed.data||[]).filter(r=>r["Employee Code"]).map(r=>({employee_code:String(r["Employee Code"]).trim(),employee_name:String(r["Employee Name"]||"").trim(),branch:String(r.Branch||"").trim(),dept_name:String(r.Dept_Name||"").trim(),desig_name:String(r.Desig_Name||"").trim(),in_time:String(r["In Time"]||"").trim(),out_time:String(r["Out-Time"]||"").trim()}));
-    const result=await request("/api/attendance/daily-summary/import",{method:"POST",body:{date,rows}});
-    toast(`Imported ${result.punches_imported} punches, ${result.employees_created} new employees.`);
-    await loadEmployees();await loadAttendance();
-  }catch(e){toast(e.message||errorCopy(e,"Import daily attendance"))}finally{$("daily-attendance-file").value=""}
+async function importDailyAttendance(file) {
+  const date = $("daily-attendance-date").value;
+  if (!date) { toast("Pick the date the file covers first."); return; }
+  try {
+    const { fields, data } = await readCsvFile(file);
+    const c = { code: findCol(fields, ["employeecode", "empcode"]), name: findCol(fields, ["employeename", "empname"]), branch: findCol(fields, ["branch"]),
+      dept: findCol(fields, ["deptname"]), desig: findCol(fields, ["designame"]), tin: findCol(fields, ["intime"]), tout: findCol(fields, ["outtime"]) };
+    if (!c.code || !c.tin || !c.tout) throw new Error("This doesn't look like a Realtime attendance download (needs Employee Code, In Time, Out-Time).");
+    const rows = data.filter(r => r[c.code]).map(r => ({ employee_code: r[c.code], employee_name: c.name ? r[c.name] : "", branch: c.branch ? r[c.branch] : "",
+      dept_name: c.dept ? r[c.dept] : "", desig_name: c.desig ? r[c.desig] : "", in_time: r[c.tin], out_time: r[c.tout] }));
+    const r = await request("/api/attendance/daily-summary/import", { method: "POST", body: { date, rows } });
+    toast(`Imported ${r.punches_imported} punches for ${date}${r.employees_created ? `; ${r.employees_created} new employees created` : ""}.`);
+    await loadEmployees(); await loadAttendance();
+  } catch (e) { toast(e.message || errorCopy(e, "Import daily attendance")); } finally { $("daily-attendance-file").value = ""; }
 }
 
-function renderCompOff(){
-  const empty=$("compoff-empty"),wrap=$("compoff-table-wrap");
-  if(!state.compoff.length){empty.textContent="No comp-off activity for this scope and month.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
-  empty.classList.add("hidden");wrap.classList.remove("hidden");
-  $("compoff-table").innerHTML=state.compoff.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_name)}</td><td class="p-3">${r.earned_this_month}</td><td class="p-3">${r.used_this_month}</td><td class="p-3 ${r.net_change_this_month<0?"text-red-700":"text-emerald-700"}">${r.net_change_this_month>0?"+":""}${r.net_change_this_month}</td></tr>`).join("");
+/* ---------- duty roster ---------- */
+async function loadRoster() {
+  try { const data = await request(`/api/duty-roster?hotel_id=${enc(state.selectedHotel)}&month=${enc(selectedMonth())}`); state.roster = data.records || []; renderRoster(); }
+  catch (e) { toast(errorCopy(e, "Load roster")); }
 }
-async function loadCompOff(){try{const data=await request(`/api/comp-off?hotel_id=${encodeURIComponent(state.selectedHotel)}&month=${encodeURIComponent(selectedMonth())}`);state.compoff=data.records||[];renderCompOff()}catch(e){toast(errorCopy(e,"Load comp-off"))}}
+function renderRoster() {
+  const empty = $("roster-empty"), wrap = $("roster-table-wrap");
+  if (state.selectedHotel === "all") { empty.textContent = "Choose one hotel in the header to view its roster. (You can still download the template or upload a roster for all hotels at once.)"; empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  const emps = scopeEmployees();
+  if (!emps.length) { empty.textContent = "No employees in this hotel yet."; empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  const map = new Map(state.roster.map(r => [`${r.employee_id}|${r.date}`, r.type]));
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  $("roster-table-head").innerHTML = `<tr><th class="sticky-col min-w-[96px] bg-slate-50 p-3">Date</th>${emps.map(e => `<th class="min-w-[120px] border-l p-3"><span class="block text-slate-800">${esc(e.id)}</span><span class="block font-normal normal-case text-slate-500">${esc(e.name)}</span></th>`).join("")}</tr>`;
+  $("roster-table").innerHTML = monthDates(selectedMonth()).map(date => {
+    const d = new Date(date + "T00:00:00");
+    return `<tr class="border-t"><th class="sticky-col whitespace-nowrap bg-white p-3 font-semibold">${date.slice(8)} <span class="text-xs font-normal text-slate-500">${d.toLocaleDateString("en-GB", { weekday: "short" })}</span></th>${emps.map(e => {
+      const t = map.get(`${e.id}|${date}`);
+      return `<td class="border-l p-2 text-xs ${t === "Weekly Off" ? "bg-slate-100 font-semibold text-slate-700" : t ? "text-slate-700" : "text-slate-300"}">${t ? esc(t) : "·"}</td>`; }).join("")}</tr>`;
+  }).join("");
+}
+async function downloadRosterTemplate() {
+  const emps = scopeEmployees();
+  if (!emps.length) { toast("Add employees first — the template is built from them."); return; }
+  try {
+    const month = selectedMonth(), data = await request(`/api/duty-roster?hotel_id=${enc(state.selectedHotel)}&month=${enc(month)}`);
+    const map = new Map((data.records || []).map(r => [`${r.employee_id}|${r.date}`, r.type]));
+    const dates = monthDates(month);
+    const rows = emps.map(e => { const o = { employee_id: e.id, employee_name: e.name }; dates.forEach(d => { o[d] = map.get(`${e.id}|${d}`) || ""; }); return o; });
+    const h = state.hotels.find(h => String(h.id) === state.selectedHotel);
+    downloadCsv(rows, `duty-roster-${h ? h.code || h.id : "all-hotels"}-${month}.csv`);
+    toast("Template downloaded. Type Weekly Off (or WO) for off days; leave working days blank or enter a shift name.");
+  } catch (e) { toast(errorCopy(e, "Download roster template")); }
+}
+function rosterValue(v) { const t = String(v ?? "").trim(); return /^(wo|w\/o|off|weekly ?off|weekly-off|w off)$/i.test(t) ? "Weekly Off" : t; }
+async function uploadRoster(file) {
+  try {
+    const { fields, data } = await readCsvFile(file);
+    const idCol = findCol(fields, ID_ALIASES);
+    if (!idCol) throw new Error("No employee code column found. Use “Download Template” for the layout.");
+    const year = Number(selectedMonth().slice(0, 4));
+    const dateCols = fields.map(f => ({ f, d: headerToIsoDate(f, year) })).filter(x => x.d);
+    let rows = [];
+    if (dateCols.length) {
+      data.filter(r => r[idCol]).forEach(r => dateCols.forEach(({ f, d }) => rows.push({ employee_id: r[idCol], date: d, type: rosterValue(r[f]) })));
+    } else {
+      const dc = findCol(fields, ["date"]), tc = findCol(fields, ["type", "shift", "duty"]);
+      if (!dc || !tc) throw new Error("Couldn't find date columns. Use the template (one column per date), or a sheet with employee_id, date and type columns.");
+      rows = data.filter(r => r[idCol]).map(r => ({ employee_id: r[idCol], date: headerToIsoDate(r[dc], year) || r[dc], type: rosterValue(r[tc]) }));
+    }
+    if (!rows.length) throw new Error("No roster rows found in that file.");
+    const r = await request("/api/duty-roster", { method: "POST", body: { rows }, timeout: 180000 });
+    toast(`Roster saved: ${r.applied} entries set, ${r.cleared} cleared. The Attendance Register now uses it.`);
+    await loadRoster();
+  } catch (e) { toast(e.message || errorCopy(e, "Upload roster")); } finally { $("roster-file").value = ""; }
+}
 
-function renderPayroll(){
-  const empty=$("payroll-empty"),wrap=$("payroll-table-wrap");
-  if(!state.payroll.length){empty.textContent="No payroll records for this scope and month.";empty.classList.remove("hidden");wrap.classList.add("hidden");return}
-  empty.classList.add("hidden");wrap.classList.remove("hidden");
-  $("payroll-table").innerHTML=state.payroll.map(r=>`<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_name)}</td><td class="p-3"><input type="number" min="0" step="0.01" class="salary-input w-28 rounded border p-1.5 text-sm" data-employee="${esc(r.employee_id)}" value="${r.monthly_salary}"></td><td class="p-3">${r.present_days}</td><td class="p-3">${r.absent_days}</td><td class="p-3">${r.weekly_off_days}</td><td class="p-3">${r.comp_off_days}</td><td class="p-3 font-semibold">${r.payable_days}</td><td class="p-3">${r.per_day_rate}</td><td class="p-3 font-bold text-emerald-700">${r.gross_pay}</td></tr>`).join("");
-  document.querySelectorAll(".salary-input").forEach(input=>{
-    input.addEventListener("change",async()=>{
-      const employee_id=input.dataset.employee,value=Number(input.value);
-      if(isNaN(value)||value<0){toast("Salary must be a non-negative number.");return}
-      try{await request(`/api/employees/${encodeURIComponent(employee_id)}/salary`,{method:"POST",body:{monthly_salary:value}});toast("Salary updated.");await loadPayroll()}
-      catch(e){toast(errorCopy(e,"Update salary"))}
-    });
+/* ---------- leaves ---------- */
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+async function loadLeavePolicy() {
+  try { const d = await request("/api/leave-policy"); state.leaveTypes = d.records || []; state.leaveYearStart = d.leave_year_start_month || 1; renderPolicy(); }
+  catch (e) { toast(errorCopy(e, "Load leave policy")); }
+}
+function renderPolicy() {
+  $("leave-year-start").innerHTML = MONTH_NAMES.map((m, i) => `<option value="${i + 1}" ${state.leaveYearStart === i + 1 ? "selected" : ""}>${m}</option>`).join("");
+  $("policy-table").innerHTML = state.leaveTypes.length ? state.leaveTypes.map(t => `<tr class="border-t"><td class="p-3 font-semibold">${esc(t.name)}</td><td class="p-3">${esc(t.code)}</td><td class="p-3">${fmtNum(t.annual_days)}</td><td class="p-3">${t.paid ? "Paid" : "Unpaid"}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="p-6 text-center text-slate-500">No leave policy yet — download the template, fill it in and upload it.</td></tr>`;
+}
+function downloadPolicyTemplate() {
+  downloadCsv([{ leave_type: "Casual Leave", code: "CL", annual_days: 12, paid: "Yes" }, { leave_type: "Sick Leave", code: "SL", annual_days: 12, paid: "Yes" },
+    { leave_type: "Earned Leave", code: "EL", annual_days: 15, paid: "Yes" }, { leave_type: "Leave Without Pay", code: "LWP", annual_days: 0, paid: "No" }], "leave-policy-template.csv");
+}
+async function uploadPolicy(file) {
+  try {
+    const { fields, data } = await readCsvFile(file);
+    const c = { name: findCol(fields, ["leavetype", "type", "name", "leave"]), code: findCol(fields, ["code", "shortcode"]), days: findCol(fields, ["annualdays", "daysperyear", "days", "entitlement", "annual"]), paid: findCol(fields, ["paid", "ispaid"]) };
+    if (!c.name) throw new Error("The policy needs a leave_type column. Use “Download Template” for the layout.");
+    const rows = data.filter(r => r[c.name]).map(r => ({ leave_type: r[c.name], code: c.code ? r[c.code] : "", annual_days: c.days ? (r[c.days] === "" ? 0 : r[c.days]) : 0, paid: c.paid ? r[c.paid] : "Yes" }));
+    if (!rows.length) throw new Error("No leave types found in that file.");
+    const r = await request("/api/leave-policy", { method: "POST", body: { rows } });
+    toast(`Leave policy saved: ${r.saved} leave types.`); await loadLeavePolicy(); await loadLeaves();
+  } catch (e) { toast(e.message || errorCopy(e, "Upload leave policy")); } finally { $("policy-file").value = ""; }
+}
+async function loadLeaves() {
+  try { state.leaves = await request(`/api/leaves?hotel_id=${enc(state.selectedHotel)}&month=${enc(selectedMonth())}`); renderLeaves(); }
+  catch (e) { toast(errorCopy(e, "Load leaves")); }
+}
+function balanceCell(b, type) {
+  if (!type.paid) return `<td class="border-l p-3"><span class="font-semibold">${b.used}</span><span class="block text-[11px] text-slate-500">days used</span></td>`;
+  return `<td class="border-l p-3"><span class="font-semibold ${b.balance < 0 ? "text-red-700" : "text-slate-900"}">${fmtNum(b.balance)}</span><span class="block text-[11px] text-slate-500">start ${fmtNum(b.opening)} · used ${b.used}</span></td>`;
+}
+function renderLeaves() {
+  const empty = $("leaves-empty"), wrap = $("leaves-table-wrap"), L = state.leaves;
+  if (!L || !L.records.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  $("leaves-table-head").innerHTML = `<tr><th class="sticky-col min-w-[190px] bg-slate-50 p-3">Employee</th>${L.leave_types.map(t => `<th class="min-w-[120px] border-l p-3" title="${esc(t.name)}">${esc(t.code)}<span class="block font-normal normal-case text-slate-500">${esc(t.name)}</span></th>`).join("")}<th class="min-w-[150px] border-l p-3">Comp Off<span class="block font-normal normal-case text-slate-500">from duty roster</span></th></tr>`;
+  $("leaves-table").innerHTML = L.records.slice().sort((a, b) => natural(a.employee_id, b.employee_id)).map(r => {
+    const c = r.comp_off;
+    return `<tr class="border-t"><th class="sticky-col bg-white p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></th>${L.leave_types.map(t => balanceCell(r.balances[t.name], t)).join("")}<td class="border-l p-3"><span class="font-semibold ${c.balance < 0 ? "text-red-700" : "text-slate-900"}">${fmtNum(c.balance)}</span><span class="block text-[11px] text-slate-500">start ${fmtNum(c.opening)} · earned ${c.earned} · used ${c.used}</span></td></tr>`;
+  }).join("");
+}
+function exportLeaves() {
+  const L = state.leaves; if (!L || !L.records.length) { toast("Nothing to export yet."); return; }
+  downloadCsv(L.records.map(r => { const o = { employee_code: r.employee_id, employee_name: r.employee_name };
+    L.leave_types.forEach(t => { const b = r.balances[t.name]; o[`${t.code} balance`] = t.paid ? fmtNum(b.balance) : ""; o[`${t.code} used`] = b.used; });
+    o["Comp Off balance"] = fmtNum(r.comp_off.balance); o["Comp Off earned"] = r.comp_off.earned; o["Comp Off used"] = r.comp_off.used; return o; }), `leave-balances-${selectedMonth()}.csv`);
+}
+function downloadBalanceTemplate() {
+  const emps = scopeEmployees();
+  if (!emps.length) { toast("Add employees first — the template is built from them."); return; }
+  if (!state.leaveTypes.length) { toast("Upload the leave policy first so the template has your leave types."); return; }
+  downloadCsv(emps.map(e => { const o = { employee_id: e.id, employee_name: e.name }; state.leaveTypes.filter(t => t.paid).forEach(t => { o[t.name] = ""; }); o["Comp Off"] = ""; return o; }), "opening-balances-template.csv");
+  toast("Fill in each person's remaining balance, then upload it with the correct “as at” date.");
+}
+async function uploadBalances(file) {
+  const as_of = $("leave-asof").value;
+  if (!as_of) { toast("Choose the date these balances are as at first."); return; }
+  try {
+    const { fields, data } = await readCsvFile(file);
+    const idCol = findCol(fields, ID_ALIASES);
+    if (!idCol) throw new Error("No employee code column found. Use “Download Template” for the layout.");
+    const typeCol = findCol(fields, ["leavetype"]), balCol = findCol(fields, ["balance", "openingbalance"]);
+    let rows = [], ignored = [];
+    if (typeCol && balCol) rows = data.map(r => ({ employee_id: r[idCol], leave_type: r[typeCol], balance: r[balCol] }));
+    else {
+      const known = new Map(); state.leaveTypes.forEach(t => { known.set(norm(t.name), t.name); known.set(norm(t.code), t.name); }); ["compoff", "co"].forEach(k => known.set(k, "Comp Off"));
+      const cols = fields.filter(f => f !== idCol && known.has(norm(f)));
+      ignored = fields.filter(f => f !== idCol && !known.has(norm(f)) && !NAME_ALIASES.includes(norm(f)));
+      if (!cols.length) throw new Error("None of the columns match your leave types. Column headings must be the leave name or code (e.g. Casual Leave or CL) or Comp Off. Upload the policy first if you haven't.");
+      data.filter(r => r[idCol]).forEach(r => cols.forEach(f => rows.push({ employee_id: r[idCol], leave_type: known.get(norm(f)), balance: r[f] })));
+    }
+    const r = await request("/api/leave-balances/import", { method: "POST", body: { as_of, rows }, timeout: 180000 });
+    let msg = `Balances saved for ${r.applied} entries as at ${as_of}.`;
+    if (r.unknown_employee_count) msg += ` ${r.unknown_employee_count} employee code(s) not found in HRMS (e.g. ${r.unknown_employees.slice(0, 3).join(", ")}) were skipped.`;
+    if (r.unknown_leave_types.length) msg += ` Unknown leave type(s): ${r.unknown_leave_types.join(", ")}.`;
+    if (ignored.length) msg += ` Ignored columns: ${ignored.slice(0, 4).join(", ")}.`;
+    toast(msg); await loadLeaves();
+  } catch (e) { toast(e.message || errorCopy(e, "Upload balances")); } finally { $("balance-file").value = ""; }
+}
+
+/* ---------- payroll ---------- */
+function renderPayroll() {
+  const empty = $("payroll-empty"), wrap = $("payroll-table-wrap");
+  if (!state.payroll.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  $("payroll-table").innerHTML = state.payroll.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></td><td class="p-3"><input type="number" min="0" step="0.01" class="salary-input w-28 rounded border p-1.5 text-sm" data-employee="${esc(r.employee_id)}" value="${r.monthly_salary}"></td><td class="p-3">${r.present_days}</td><td class="p-3">${r.absent_days}</td><td class="p-3">${r.weekly_off_days}</td><td class="p-3">${r.comp_off_days}</td><td class="p-3">${r.leave_days}${r.unpaid_leave_days ? `<span class="block text-[11px] text-slate-500">+${r.unpaid_leave_days} unpaid</span>` : ""}</td><td class="p-3 font-semibold">${r.payable_days}</td><td class="p-3">${fmtNum(r.per_day_rate)}</td><td class="p-3 font-bold text-emerald-700">${fmtNum(r.gross_pay)}</td></tr>`).join("");
+  document.querySelectorAll(".salary-input").forEach(input => input.addEventListener("change", async () => {
+    const value = Number(input.value);
+    if (isNaN(value) || value < 0) { toast("Salary must be a number, 0 or more."); return; }
+    try { await request(`/api/employees/${enc(input.dataset.employee)}/salary`, { method: "POST", body: { monthly_salary: value } }); toast("Salary updated."); await loadPayroll(); await loadEmployees(); }
+    catch (e) { toast(errorCopy(e, "Update salary")); }
+  }));
+}
+async function loadPayroll() {
+  try { const data = await request(`/api/payroll?hotel_id=${enc(state.selectedHotel)}&month=${enc(selectedMonth())}`); state.payroll = data.records || []; renderPayroll(); }
+  catch (e) { toast(errorCopy(e, "Load payroll")); }
+}
+
+/* ---------- unrecognised punches ---------- */
+async function loadUnrecognised() {
+  try { const d = await request("/api/biometric/unrecognised"); state.unrecognised = d.records || []; renderUnrecognised(); }
+  catch (e) { toast(errorCopy(e, "Load unrecognised punches")); }
+}
+function renderUnrecognised() {
+  const empty = $("unrecognised-empty"), wrap = $("unrecognised-wrap");
+  if (!state.unrecognised.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  $("unrecognised-table").innerHTML = state.unrecognised.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_code)}</td><td class="p-3">${r.punches}</td><td class="p-3">${esc(r.last_punch || "—")}</td><td class="p-3">${esc(r.hotel_name || "—")}</td><td class="p-3"><button class="add-from-punch rounded border px-2 py-1 text-xs font-bold" data-code="${esc(r.employee_code)}" data-hotel="${esc(r.hotel_name)}">Add as employee</button></td></tr>`).join("");
+  document.querySelectorAll(".add-from-punch").forEach(b => b.onclick = () => {
+    switchTab("employees"); toggleAddEmployeeForm(true);
+    const code = b.dataset.code; if (/^\d+$/.test(code)) $("new-emp-card").value = code; else $("new-emp-id").value = code;
+    const h = state.hotels.find(h => h.name === b.dataset.hotel); if (h) $("new-emp-hotel").value = h.id;
+    $("new-emp-name").focus();
   });
 }
-async function loadPayroll(){try{const data=await request(`/api/payroll?hotel_id=${encodeURIComponent(state.selectedHotel)}&month=${encodeURIComponent(selectedMonth())}`);state.payroll=data.records||[];renderPayroll()}catch(e){toast(errorCopy(e,"Load payroll"))}}
-
-function activeTab(){return document.querySelector(".tab-view.active")?.id}
-async function refreshActiveTab(){
-  const tab=activeTab();
-  if(tab==="hotel-network"){renderHotelTable()}
-  if(tab==="biometric"){renderBiometricTable()}
-  if(tab==="employees"){renderEmployees()}
-  if(tab==="attendance"){await loadAttendance()}
-  if(tab==="compoff"){await loadCompOff()}
-  if(tab==="payroll"){await loadPayroll()}
+async function clearUnrecognised() {
+  if (!state.unrecognised.length) { toast("Nothing to delete."); return; }
+  const total = state.unrecognised.reduce((s, r) => s + r.punches, 0);
+  if (!confirm(`Permanently delete ${total} punches from ${state.unrecognised.length} unrecognised ID(s)? If any of these belong to staff you add later, their history would be lost.`)) return;
+  try { const r = await request("/api/biometric/unrecognised", { method: "DELETE", body: { confirm: true } }); toast(`Deleted ${r.deleted} punches.`); await loadUnrecognised(); await loadHotels(); }
+  catch (e) { toast(errorCopy(e, "Delete unrecognised punches")); }
 }
 
-document.addEventListener("DOMContentLoaded",async()=>{
-  populateMonths();
-  $("kpi-grid").innerHTML=[["building-2","Hotels","—"],["users","Employees","—"],["calendar-check","Attendance records","—"],["fingerprint","Connected devices","—"],["wallet-cards","Payroll records","—"]]
-    .map(x=>`<article class="panel rounded-2xl bg-white p-4"><div class="flex justify-between"><div><p class="text-xs font-bold uppercase text-slate-500">${x[1]}</p><p class="mt-2 text-2xl font-bold">${x[2]}</p></div><i data-lucide="${x[0]}" class="h-5 w-5 text-indigo-600"></i></div></article>`).join("");
+/* ---------- navigation ---------- */
+function activeTab() { const el = document.querySelector(".tab-view.active"); return el ? el.id : ""; }
+async function refreshActiveTab() {
+  const tab = activeTab();
+  if (tab === "hotel-network") renderHotelTable();
+  else if (tab === "biometric") { renderBiometricTable(); await loadUnrecognised(); }
+  else if (tab === "employees") renderEmployees();
+  else if (tab === "attendance") await loadAttendance();
+  else if (tab === "roster") await loadRoster();
+  else if (tab === "leaves") { await loadLeavePolicy(); await loadLeaves(); }
+  else if (tab === "payroll") await loadPayroll();
+}
+function switchTab(view) {
+  document.querySelectorAll(".tab-view").forEach(s => s.classList.toggle("active", s.id === view));
+  document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("active", x.dataset.view === view));
+}
 
-  document.querySelectorAll("[data-view]").forEach(b=>b.onclick=async()=>{
-    document.querySelectorAll(".tab-view").forEach(s=>s.classList.toggle("active",s.id===b.dataset.view));
-    document.querySelectorAll("[data-view]").forEach(x=>x.classList.toggle("active",x===b));
-    await refreshActiveTab();
-  });
+document.addEventListener("DOMContentLoaded", async () => {
+  // month list: this month and the 11 before it
+  const now = new Date(), opts = [];
+  for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); opts.push(`<option value="${d.getFullYear()}-${pad2(d.getMonth() + 1)}">${d.toLocaleString("en-US", { month: "long", year: "numeric" })}</option>`); }
+  $("month-select").innerHTML = opts.join("");
+  $("daily-attendance-date").value = todayLocal(); $("leave-asof").value = todayLocal();
+  $("kpi-grid").innerHTML = [["building-2", "Hotels"], ["users", "Employees"], ["calendar-check", "Punches recorded"], ["fingerprint", "Connected devices"]]
+    .map(x => `<article class="panel rounded-2xl bg-white p-4"><div class="flex justify-between"><div><p class="text-xs font-bold uppercase text-slate-500">${x[1]}</p><p class="mt-2 text-2xl font-bold">—</p></div><i data-lucide="${x[0]}" class="h-5 w-5 text-indigo-600"></i></div></article>`).join("");
 
-  $("hotel-filter").onchange=async e=>{state.selectedHotel=e.target.value;renderKpis();await refreshActiveTab()};
-  $("month-select").onchange=async()=>{await refreshActiveTab()};
-  $("overview-refresh").onclick=async()=>{await loadHotels();$("overview-status").textContent=state.backend?"Backend records refreshed.":"Backend unavailable."};
-  $("reload-hotels").onclick=loadHotels;
-  $("add-hotel").onclick=()=>toggleAddHotelForm(true);
-  $("cancel-add-hotel").onclick=()=>toggleAddHotelForm(false);
-  $("add-hotel-form").onsubmit=addHotel;
-  $("refresh-employees").onclick=loadEmployees;
-  $("sync-biometric").onclick=syncBiometric;
-  $("delete-all-employees").onclick=deleteAllEmployees;
-  $("add-employee").onclick=()=>toggleAddEmployeeForm(true);
-  $("cancel-add-employee").onclick=()=>toggleAddEmployeeForm(false);
-  $("add-employee-form").onsubmit=addEmployee;
-  $("import-employees").onclick=()=>$("employees-file").click();
-  $("download-employee-template").onclick=downloadEmployeeTemplate;
-  $("employees-file").onchange=e=>{if(e.target.files[0])importEmployees(e.target.files[0])};
-  $("download-attendance").onclick=()=>downloadCsv(state.attendance,"attendance-register.csv");
-  $("upload-roster").onclick=()=>$("duty-roster-file").click();
-  $("duty-roster-file").onchange=e=>{if(e.target.files[0])uploadRoster(e.target.files[0])};
-  $("import-daily-attendance").onclick=()=>{const d=$("daily-attendance-date");d.onchange=()=>$("daily-attendance-file").click();d.click()};
-  $("daily-attendance-file").onchange=e=>{if(e.target.files[0])importDailyAttendance(e.target.files[0])};
-  $("download-compoff").onclick=()=>downloadCsv(state.compoff,"comp-off.csv");
-  $("download-payroll").onclick=()=>downloadCsv(state.payroll,"payroll.csv");
+  document.querySelectorAll("[data-view]").forEach(b => b.onclick = async () => { switchTab(b.dataset.view); await refreshActiveTab(); });
+  $("hotel-filter").onchange = async e => { state.selectedHotel = e.target.value; renderKpis(); await refreshActiveTab(); };
+  $("month-select").onchange = refreshActiveTab;
+  document.addEventListener("click", e => { if (!e.target.closest(".attendance-picker") && !e.target.closest(".attendance-cell")) closePickers(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closePickers(); });
 
-  await loadHotels();await loadEmployees();
-  $("overview-status").textContent=state.backend?"Backend status loaded.":"Backend unavailable.";
+  $("overview-refresh").onclick = async () => { await loadHotels(); await loadEmployees(); $("overview-status").textContent = state.backend ? "Backend records refreshed." : "Backend unavailable."; };
+  $("reload-hotels").onclick = loadHotels;
+  $("add-hotel").onclick = () => toggleAddHotelForm(true); $("cancel-add-hotel").onclick = () => toggleAddHotelForm(false); $("add-hotel-form").onsubmit = addHotel;
+
+  $("add-employee").onclick = () => toggleAddEmployeeForm(true); $("cancel-add-employee").onclick = () => toggleAddEmployeeForm(false); $("add-employee-form").onsubmit = addEmployee;
+  $("refresh-employees").onclick = loadEmployees; $("delete-all-employees").onclick = deleteAllEmployees;
+  $("import-employees").onclick = () => $("employees-file").click(); $("employees-file").onchange = e => { if (e.target.files[0]) importEmployees(e.target.files[0]); };
+  $("download-employee-template").onclick = downloadEmployeeTemplate;
+
+  $("download-attendance").onclick = exportAttendance;
+  $("import-daily-attendance").onclick = () => $("daily-attendance-file").click(); $("daily-attendance-file").onchange = e => { if (e.target.files[0]) importDailyAttendance(e.target.files[0]); };
+
+  $("download-roster-template").onclick = downloadRosterTemplate;
+  $("upload-roster").onclick = () => $("roster-file").click(); $("roster-file").onchange = e => { if (e.target.files[0]) uploadRoster(e.target.files[0]); };
+
+  $("download-policy-template").onclick = downloadPolicyTemplate;
+  $("upload-policy").onclick = () => $("policy-file").click(); $("policy-file").onchange = e => { if (e.target.files[0]) uploadPolicy(e.target.files[0]); };
+  $("leave-year-start").onchange = async e => { try { await request("/api/leave-policy", { method: "POST", body: { leave_year_start_month: Number(e.target.value) } }); state.leaveYearStart = Number(e.target.value); toast("Leave year start saved."); await loadLeaves(); } catch (err) { toast(errorCopy(err, "Save leave year")); } };
+  $("download-balance-template").onclick = downloadBalanceTemplate;
+  $("upload-balances").onclick = () => $("balance-file").click(); $("balance-file").onchange = e => { if (e.target.files[0]) uploadBalances(e.target.files[0]); };
+  $("download-leaves").onclick = exportLeaves;
+
+  $("download-payroll").onclick = () => downloadCsv(state.payroll.map(r => ({ employee_code: r.employee_id, employee_name: r.employee_name, monthly_salary: r.monthly_salary, days_in_month: r.days_in_month,
+    present_days: r.present_days, absent_days: r.absent_days, weekly_off_days: r.weekly_off_days, comp_off_days: r.comp_off_days, paid_leave_days: r.leave_days, unpaid_leave_days: r.unpaid_leave_days,
+    payable_days: r.payable_days, per_day_rate: r.per_day_rate, gross_pay: r.gross_pay })), `payroll-${selectedMonth()}.csv`);
+
+  $("refresh-unrecognised").onclick = loadUnrecognised; $("clear-unrecognised").onclick = clearUnrecognised;
+
+  await loadHotels(); await loadEmployees(); await loadLeavePolicy();
+  $("overview-status").textContent = state.backend ? "Backend status loaded." : "Backend unavailable.";
   renderKpis();
-  lucide.createIcons();
+  if (window.lucide) lucide.createIcons();
 });
 </script>
 </body>
