@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Voyage HRMS · My Workspace</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--teal:#0F3D3E;--teal-deep:#0A2C2D;--brass:#C9972E;--brass-deep:#A87A1E;--canvas:#FAF7F1;--ink:#1C2B2B;--line:#E7E0D4;--card:#FFFFFF}
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;font-family:"Manrope",sans-serif;color:var(--ink);background:var(--canvas);-webkit-font-smoothing:antialiased}
+  button{font-family:inherit}
+  .screen{display:none;min-height:100vh}.screen.active{display:flex}
+  .brass-btn{background:var(--brass);color:#2A1D04;font-weight:700;transition:.15s}
+  .brass-btn:hover{background:var(--brass-deep)}
+  .brass-btn:disabled{opacity:.6}
+  .ghost-btn{border:1.5px solid var(--line);font-weight:700;color:var(--teal)}
+  .field{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:.75rem .9rem;font-size:.95rem;background:#fff}
+  .field:focus{outline:none;border-color:var(--brass);box-shadow:0 0 0 3px rgba(201,151,46,.18)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px}
+  .pill{font-size:.7rem;font-weight:800;border-radius:999px;padding:.25rem .65rem;white-space:nowrap;display:inline-block}
+  .tab-panel{display:none}.tab-panel.active{display:block}
+  .navbtn{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.68rem;font-weight:700;color:#8A9A98;padding:.4rem 0;flex:1}
+  .navbtn.active{color:var(--teal)}
+  .navbtn svg{width:22px;height:22px}
+  .toast{position:fixed;left:50%;bottom:86px;transform:translate(-50%,20px);opacity:0;transition:.25s;background:var(--teal-deep);color:#fff;padding:.7rem 1.1rem;border-radius:12px;font-size:.85rem;font-weight:600;z-index:90;max-width:88vw;text-align:center}
+  .toast.show{transform:translate(-50%,0);opacity:1}
+  @media(min-width:640px){.phone-frame{max-width:460px;margin:0 auto}}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<section id="screen-login" class="screen active">
+  <div class="w-full flex flex-col justify-center px-6 py-10" style="background:linear-gradient(160deg,var(--teal) 0%,var(--teal-deep) 100%);min-height:100vh">
+    <div class="phone-frame w-full">
+      <div class="mb-10 text-center text-white">
+        <div class="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl" style="background:rgba(255,255,255,.12)">
+          <svg viewBox="0 0 24 24" fill="none" class="h-7 w-7"><path d="M4 21V9l8-5 8 5v12" stroke="#C9972E" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 21v-7h6v7" stroke="#C9972E" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </div>
+        <p class="text-xs font-bold uppercase tracking-wide" style="color:#B9CFCE;letter-spacing:.14em">Voyage Hospitality</p>
+        <h1 class="mt-1 text-2xl font-extrabold">My Workspace</h1>
+      </div>
+      <div class="card p-6">
+        <form id="login-form">
+          <label class="mb-1.5 block text-sm font-bold" style="color:var(--teal)">Employee ID</label>
+          <input id="login-id" class="field mb-4" placeholder="e.g. VCOR045" autocomplete="username">
+          <label class="mb-1.5 block text-sm font-bold" style="color:var(--teal)">Password</label>
+          <input id="login-password" type="password" class="field" autocomplete="current-password">
+          <p id="login-error" class="mt-3 hidden text-sm font-semibold text-red-700"></p>
+          <button id="login-submit" type="submit" class="brass-btn mt-5 w-full rounded-xl py-3 text-sm">Log in</button>
+        </form>
+        <p class="mt-4 text-center text-xs text-slate-500">First time logging in? Use the password your HR team shared with you — you'll be asked to set your own right after.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FORCED PASSWORD RESET (first login) -->
+<section id="screen-reset" class="screen">
+  <div class="w-full flex flex-col justify-center px-6 py-10" style="background:var(--canvas);min-height:100vh">
+    <div class="phone-frame w-full">
+      <h1 class="text-xl font-extrabold" style="color:var(--teal)">Set your own password</h1>
+      <p class="mt-2 text-sm text-slate-600">For your security, choose a password only you know. You'll use this from now on to log in.</p>
+      <form id="reset-form" class="card mt-5 p-6">
+        <label class="mb-1.5 block text-sm font-bold" style="color:var(--teal)">New password</label>
+        <input id="reset-password" type="password" class="field" autocomplete="new-password" placeholder="At least 6 characters">
+        <label class="mb-1.5 mt-4 block text-sm font-bold" style="color:var(--teal)">Confirm password</label>
+        <input id="reset-password-confirm" type="password" class="field" autocomplete="new-password">
+        <p id="reset-error" class="mt-3 hidden text-sm font-semibold text-red-700"></p>
+        <button id="reset-submit" type="submit" class="brass-btn mt-5 w-full rounded-xl py-3 text-sm">Save and continue</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- MAIN APP -->
+<section id="screen-app" class="screen">
+  <div class="phone-frame w-full flex flex-col" style="min-height:100vh">
+    <header class="px-5 pt-6 pb-4 text-white" style="background:var(--teal)">
+      <div class="flex items-center justify-between">
+        <div>
+          <p id="app-emp-name" class="text-lg font-extrabold">—</p>
+          <p id="app-emp-hotel" class="text-xs" style="color:#B9CFCE">—</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="open-change-password" class="grid h-9 w-9 place-items-center rounded-full" style="background:rgba(255,255,255,.14)" title="Change password">
+            <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="#fff" stroke-width="1.8"/><path d="M19.4 13a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V19a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H4a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H10a1.65 1.65 0 001-1.51V4a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V10a1.65 1.65 0 001.51 1H20a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="#fff" stroke-width="1.5"/></svg>
+          </button>
+          <button id="logout-btn" class="grid h-9 w-9 place-items-center rounded-full" style="background:rgba(255,255,255,.14)" title="Log out">
+            <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 overflow-y-auto px-5 py-5" style="padding-bottom:6rem">
+
+      <!-- ATTENDANCE -->
+      <div id="tab-attendance" class="tab-panel active">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-extrabold" style="color:var(--teal)">My Attendance</h2>
+          <select id="att-month" class="field" style="width:auto;padding:.5rem .7rem"></select>
+        </div>
+        <div id="att-empty" class="card mt-4 p-6 text-center text-sm text-slate-500 hidden">Nothing to show for this month yet.</div>
+        <div id="att-list" class="mt-4 space-y-2"></div>
+      </div>
+
+      <!-- LEAVES -->
+      <div id="tab-leaves" class="tab-panel">
+        <h2 class="text-lg font-extrabold" style="color:var(--teal)">Leaves</h2>
+        <div id="leave-balances" class="mt-3 grid grid-cols-2 gap-2"></div>
+
+        <button id="open-apply-leave" class="brass-btn mt-5 w-full rounded-xl py-3 text-sm">Apply for Leave</button>
+
+        <div id="apply-leave-panel" class="card mt-4 hidden p-5">
+          <h3 class="font-bold" style="color:var(--teal)">Apply for Leave</h3>
+          <form id="apply-leave-form" class="mt-3 space-y-3">
+            <div><label class="mb-1 block text-xs font-bold text-slate-600">Leave type</label>
+              <select id="leave-type" class="field"></select></div>
+            <div class="grid grid-cols-2 gap-3">
+              <div><label class="mb-1 block text-xs font-bold text-slate-600">From</label><input id="leave-start" type="date" class="field"></div>
+              <div><label class="mb-1 block text-xs font-bold text-slate-600">To</label><input id="leave-end" type="date" class="field"></div>
+            </div>
+            <div><label class="mb-1 block text-xs font-bold text-slate-600">Reason</label><input id="leave-reason" class="field" placeholder="Brief reason"></div>
+            <p id="leave-error" class="hidden text-sm font-semibold text-red-700"></p>
+            <div class="flex gap-2"><button id="leave-submit" type="submit" class="brass-btn flex-1 rounded-xl py-2.5 text-sm">Submit request</button><button id="cancel-apply-leave" type="button" class="ghost-btn rounded-xl px-4 text-sm">Cancel</button></div>
+          </form>
+        </div>
+
+        <h3 class="mt-6 text-sm font-extrabold text-slate-700">My Requests</h3>
+        <div id="leave-requests-empty" class="card mt-3 p-5 text-center text-sm text-slate-500 hidden">No leave requests yet.</div>
+        <div id="leave-requests-list" class="mt-3 space-y-2"></div>
+      </div>
+
+      <!-- REGULARIZE -->
+      <div id="tab-regularize" class="tab-panel">
+        <h2 class="text-lg font-extrabold" style="color:var(--teal)">Regularize Attendance</h2>
+        <p class="mt-1 text-sm text-slate-600">Missed a punch? Ask for that day to be corrected — it goes to HR for approval.</p>
+
+        <button id="open-new-reg" class="brass-btn mt-4 w-full rounded-xl py-3 text-sm">New Request</button>
+
+        <div id="reg-panel" class="card mt-4 hidden p-5">
+          <h3 class="font-bold" style="color:var(--teal)">Request regularization</h3>
+          <form id="reg-form" class="mt-3 space-y-3">
+            <div><label class="mb-1 block text-xs font-bold text-slate-600">Date</label><input id="reg-date" type="date" class="field"></div>
+            <div><label class="mb-1 block text-xs font-bold text-slate-600">Should show as</label><select id="reg-status" class="field"><option value="Present">Present</option></select></div>
+            <div><label class="mb-1 block text-xs font-bold text-slate-600">Reason</label><input id="reg-reason" class="field" placeholder="e.g. Forgot to punch out"></div>
+            <p id="reg-error" class="hidden text-sm font-semibold text-red-700"></p>
+            <div class="flex gap-2"><button id="reg-submit" type="submit" class="brass-btn flex-1 rounded-xl py-2.5 text-sm">Submit request</button><button id="cancel-reg" type="button" class="ghost-btn rounded-xl px-4 text-sm">Cancel</button></div>
+          </form>
+        </div>
+
+        <h3 class="mt-6 text-sm font-extrabold text-slate-700">My Requests</h3>
+        <div id="reg-requests-empty" class="card mt-3 p-5 text-center text-sm text-slate-500 hidden">No regularization requests yet.</div>
+        <div id="reg-requests-list" class="mt-3 space-y-2"></div>
+      </div>
+
+      <!-- PAYSLIP -->
+      <div id="tab-payslip" class="tab-panel">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-extrabold" style="color:var(--teal)">Payslip</h2>
+          <select id="pay-month" class="field" style="width:auto;padding:.5rem .7rem"></select>
+        </div>
+        <div id="payslip-empty" class="card mt-4 p-6 text-center text-sm text-slate-500 hidden">No payslip for this month yet.</div>
+        <div id="payslip-card" class="card mt-4 hidden overflow-hidden">
+          <div class="p-5 text-white" style="background:var(--teal)">
+            <p class="text-xs font-bold uppercase tracking-wide" style="color:#B9CFCE">Payslip</p>
+            <p id="ps-month" class="text-lg font-extrabold">—</p>
+          </div>
+          <div class="p-5 text-sm">
+            <div class="flex justify-between border-b pb-2"><span class="text-slate-500">Employee</span><span id="ps-name" class="font-bold">—</span></div>
+            <div class="flex justify-between border-b py-2"><span class="text-slate-500">Hotel</span><span id="ps-hotel" class="font-bold">—</span></div>
+            <div class="flex justify-between border-b py-2"><span class="text-slate-500">Payable days</span><span id="ps-days" class="font-bold">—</span></div>
+            <div class="flex justify-between border-b py-2"><span class="text-slate-500">Per-day rate</span><span id="ps-rate" class="font-bold">—</span></div>
+            <div class="flex justify-between border-b py-2"><span class="text-slate-500">Gross pay</span><span id="ps-gross" class="font-bold">—</span></div>
+            <div class="flex justify-between pt-2 text-base"><span class="font-extrabold" style="color:var(--teal)">Net pay</span><span id="ps-net" class="font-extrabold" style="color:var(--teal)">—</span></div>
+          </div>
+        </div>
+        <button id="print-payslip" class="brass-btn mt-4 hidden w-full rounded-xl py-3 text-sm">Download / Print Payslip</button>
+      </div>
+
+    </main>
+
+    <nav class="flex border-t bg-white px-2 py-1.5" style="border-color:var(--line)">
+      <button class="navbtn active" data-tab="attendance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Attendance</button>
+      <button class="navbtn" data-tab="leaves"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 12a8 8 0 11-8-8c2.5 0 4.7 1.1 6.2 2.9"/><path d="M15 3l5 2-2 5"/></svg>Leaves</button>
+      <button class="navbtn" data-tab="regularize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>Regularize</button>
+      <button class="navbtn" data-tab="payslip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5M9 13h6M9 17h6"/></svg>Payslip</button>
+    </nav>
+  </div>
+</section>
+
+<!-- CHANGE PASSWORD (from within the app, not the forced first-login one) -->
+<div id="change-password-overlay" class="fixed inset-0 z-[80] hidden items-center justify-center bg-black/40 px-6">
+  <div class="card w-full max-w-sm p-6">
+    <h3 class="font-bold" style="color:var(--teal)">Change password</h3>
+    <form id="change-password-form" class="mt-3 space-y-3">
+      <div><label class="mb-1 block text-xs font-bold text-slate-600">New password</label><input id="cp-new" type="password" class="field"></div>
+      <div><label class="mb-1 block text-xs font-bold text-slate-600">Confirm</label><input id="cp-confirm" type="password" class="field"></div>
+      <p id="cp-error" class="hidden text-sm font-semibold text-red-700"></p>
+      <div class="flex gap-2"><button type="submit" class="brass-btn flex-1 rounded-xl py-2.5 text-sm">Save</button><button id="cp-cancel" type="button" class="ghost-btn rounded-xl px-4 text-sm">Cancel</button></div>
+    </form>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
+const pad2 = n => String(n).padStart(2, "0");
+let toastTimer;
+function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 4200); }
+function fmtMoney(n) { return "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 }); }
+function fmtHM(min) { if (min == null) return ""; return `${Math.floor(min / 60)}h ${pad2(min % 60)}m`; }
+
+const state = { token: localStorage.getItem("voyage_employee_token") || "", employee: null, leaveTypes: [] };
+
+async function api(path, options = {}) {
+  const r = await fetch(path, {
+    method: options.method || "GET",
+    headers: { "Content-Type": "application/json", ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}) },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const data = (r.headers.get("content-type") || "").includes("application/json") ? await r.json() : {};
+  if (!r.ok) { const e = new Error(data.message || "Something went wrong."); e.status = r.status; throw e; }
+  return data;
+}
+function showScreen(id) { document.querySelectorAll(".screen").forEach(s => s.classList.toggle("active", s.id === id)); }
+function switchTab(tab) {
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `tab-${tab}`));
+  document.querySelectorAll(".navbtn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  if (tab === "attendance") loadAttendance();
+  if (tab === "leaves") loadLeaves();
+  if (tab === "regularize") loadRegularization();
+  if (tab === "payslip") loadPayslip();
+}
+function monthOptions(select) {
+  const now = new Date(), opts = [];
+  for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); opts.push(`<option value="${d.getFullYear()}-${pad2(d.getMonth() + 1)}">${d.toLocaleString("en-US", { month: "long", year: "numeric" })}</option>`); }
+  select.innerHTML = opts.join("");
+}
+
+/* ---------- auth ---------- */
+async function boot() {
+  monthOptions($("att-month")); monthOptions($("pay-month"));
+  if (!state.token) return showScreen("screen-login");
+  try {
+    const d = await api("/api/self/me");
+    state.employee = d.employee;
+    enterApp();
+  } catch { state.token = ""; localStorage.removeItem("voyage_employee_token"); showScreen("screen-login"); }
+}
+function enterApp() {
+  $("app-emp-name").textContent = `${state.employee.name}`;
+  $("app-emp-hotel").textContent = `${state.employee.id} · ${state.employee.hotel_name || "—"}`;
+  showScreen("screen-app");
+  switchTab("attendance");
+}
+$("login-form").onsubmit = async ev => {
+  ev.preventDefault();
+  const id = $("login-id").value.trim(), password = $("login-password").value;
+  const err = $("login-error"), btn = $("login-submit");
+  if (!id || !password) { err.textContent = "Enter your Employee ID and password."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Logging in…";
+  try {
+    const d = await api("/api/self/login", { method: "POST", body: { employee_id: id, password } });
+    state.token = d.token; localStorage.setItem("voyage_employee_token", d.token);
+    if (d.must_reset_password) { showScreen("screen-reset"); }
+    else { state.employee = { ...d.employee, hotel_name: "" }; const me = await api("/api/self/me"); state.employee = me.employee; enterApp(); }
+  } catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Log in"; }
+};
+$("reset-form").onsubmit = async ev => {
+  ev.preventDefault();
+  const pw = $("reset-password").value, confirm = $("reset-password-confirm").value, err = $("reset-error"), btn = $("reset-submit");
+  if (pw.length < 6) { err.textContent = "Password must be at least 6 characters."; err.classList.remove("hidden"); return; }
+  if (pw !== confirm) { err.textContent = "Passwords don't match."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    await api("/api/self/set-password", { method: "POST", body: { new_password: pw } });
+    toast("Password set. Welcome!");
+    const me = await api("/api/self/me"); state.employee = me.employee; enterApp();
+  } catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Save and continue"; }
+};
+$("logout-btn").onclick = () => { state.token = ""; state.employee = null; localStorage.removeItem("voyage_employee_token"); $("login-form").reset(); showScreen("screen-login"); };
+$("open-change-password").onclick = () => { $("change-password-overlay").classList.remove("hidden"); $("change-password-overlay").classList.add("flex"); };
+$("cp-cancel").onclick = () => { $("change-password-overlay").classList.add("hidden"); $("change-password-overlay").classList.remove("flex"); $("change-password-form").reset(); $("cp-error").classList.add("hidden"); };
+$("change-password-form").onsubmit = async ev => {
+  ev.preventDefault();
+  const pw = $("cp-new").value, confirm = $("cp-confirm").value, err = $("cp-error");
+  if (pw.length < 6) { err.textContent = "Password must be at least 6 characters."; err.classList.remove("hidden"); return; }
+  if (pw !== confirm) { err.textContent = "Passwords don't match."; err.classList.remove("hidden"); return; }
+  try { await api("/api/self/set-password", { method: "POST", body: { new_password: pw } }); toast("Password updated."); $("cp-cancel").click(); }
+  catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
+};
+document.querySelectorAll(".navbtn").forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+
+/* ---------- attendance ---------- */
+function statusTone(s) {
+  if (s === "Absent") return "background:#FDE8E8;color:#B42318";
+  if (s === "Weekly Off") return "background:#EFEAE0;color:#6B5D3F";
+  if (s === "Comp Off") return "background:#EFE4FB;color:#6B21A8";
+  if (s && s.indexOf("Present") === 0) return "background:#E4F3EC;color:#0F6B3E";
+  return "background:#EFEAE0;color:#6B5D3F";
+}
+async function loadAttendance() {
+  try {
+    const d = await api(`/api/self/attendance?month=${$("att-month").value}`);
+    const rows = d.records || [];
+    $("att-empty").classList.toggle("hidden", rows.length > 0);
+    $("att-list").innerHTML = rows.map(r => {
+      const dt = new Date(r.date + "T00:00:00");
+      const hours = r.status.indexOf("Present") === 0 && r.duty_minutes != null ? `${r.in_time || "—"} → ${r.out_time || "—"} · ${fmtHM(r.duty_minutes)}` : "";
+      const canRegularize = r.status === "Absent" || r.status === "Present (Incomplete)";
+      return `<div class="card p-3.5 flex items-center justify-between">
+        <div><p class="font-bold text-sm">${dt.getDate()} ${dt.toLocaleString("en-US", { month: "short" })} <span class="font-normal text-slate-400">${dt.toLocaleString("en-US", { weekday: "short" })}</span></p>
+          ${hours ? `<p class="text-xs text-slate-500 mt-0.5">${esc(hours)}</p>` : ""}</div>
+        <div class="flex items-center gap-2">
+          <span class="pill" style="${statusTone(r.status)}">${esc(r.status)}</span>
+          ${canRegularize ? `<button class="regularize-day text-xs font-bold underline" style="color:var(--teal)" data-date="${r.date}">Fix</button>` : ""}
+        </div></div>`;
+    }).join("");
+    document.querySelectorAll(".regularize-day").forEach(b => b.onclick = () => { switchTab("regularize"); openRegForm(b.dataset.date); });
+  } catch (e) { toast(e.message); }
+}
+$("att-month").onchange = loadAttendance;
+
+/* ---------- leaves ---------- */
+async function loadLeaves() {
+  try {
+    const d = await api(`/api/self/leaves?month=${new Date().toISOString().slice(0, 7)}`);
+    state.leaveTypes = d.leave_types || [];
+    const cards = state.leaveTypes.filter(t => t.paid).map(t => {
+      const b = d.balances[t.name] || { balance: 0 };
+      return `<div class="card p-3"><p class="text-xs font-bold text-slate-500">${esc(t.name)}</p><p class="mt-1 text-xl font-extrabold" style="color:var(--teal)">${Number(b.balance).toFixed(b.balance % 1 ? 1 : 0)}</p></div>`;
+    });
+    if (d.comp_off) cards.push(`<div class="card p-3"><p class="text-xs font-bold text-slate-500">Comp Off</p><p class="mt-1 text-xl font-extrabold" style="color:var(--teal)">${Number(d.comp_off.balance).toFixed(d.comp_off.balance % 1 ? 1 : 0)}</p></div>`);
+    $("leave-balances").innerHTML = cards.join("");
+    $("leave-type").innerHTML = state.leaveTypes.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("") + `<option value="Comp Off">Comp Off</option>`;
+    await loadLeaveRequests();
+  } catch (e) { toast(e.message); }
+}
+async function loadLeaveRequests() {
+  const d = await api("/api/self/leave-requests");
+  const rows = d.records || [];
+  $("leave-requests-empty").classList.toggle("hidden", rows.length > 0);
+  $("leave-requests-list").innerHTML = rows.map(r => `<div class="card p-3.5"><div class="flex items-center justify-between"><p class="font-bold text-sm">${esc(r.leave_type)}</p><span class="pill" style="${r.status === "Approved" ? "background:#E4F3EC;color:#0F6B3E" : r.status === "Rejected" ? "background:#FDE8E8;color:#B42318" : "background:#FBF0DC;color:#8A5B00"}">${esc(r.status)}</span></div>
+    <p class="text-xs text-slate-500 mt-1">${r.start_date} → ${r.end_date}${r.reason ? " · " + esc(r.reason) : ""}</p>
+    ${r.decision_note ? `<p class="text-xs text-slate-400 mt-1">HR note: ${esc(r.decision_note)}</p>` : ""}</div>`).join("");
+}
+$("open-apply-leave").onclick = () => { $("apply-leave-panel").classList.remove("hidden"); $("leave-start").value = $("leave-end").value = new Date().toISOString().slice(0, 10); };
+$("cancel-apply-leave").onclick = () => { $("apply-leave-panel").classList.add("hidden"); $("apply-leave-form").reset(); $("leave-error").classList.add("hidden"); };
+$("apply-leave-form").onsubmit = async ev => {
+  ev.preventDefault();
+  const body = { leave_type: $("leave-type").value, start_date: $("leave-start").value, end_date: $("leave-end").value, reason: $("leave-reason").value.trim() };
+  const err = $("leave-error"), btn = $("leave-submit");
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Submitting…";
+  try { await api("/api/self/leave-requests", { method: "POST", body }); toast("Leave request submitted."); $("cancel-apply-leave").click(); await loadLeaveRequests(); }
+  catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Submit request"; }
+};
+
+/* ---------- regularization ---------- */
+function openRegForm(date) {
+  $("reg-panel").classList.remove("hidden");
+  $("reg-date").value = date || new Date().toISOString().slice(0, 10);
+  const opts = ["Present", "Comp Off", ...state.leaveTypes.map(t => t.name)];
+  $("reg-status").innerHTML = opts.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join("");
+}
+async function loadRegularization() {
+  try {
+    const d = await api("/api/self/regularization");
+    const rows = d.records || [];
+    $("reg-requests-empty").classList.toggle("hidden", rows.length > 0);
+    $("reg-requests-list").innerHTML = rows.map(r => `<div class="card p-3.5"><div class="flex items-center justify-between"><p class="font-bold text-sm">${r.date} → ${esc(r.requested_status)}</p><span class="pill" style="${r.status === "Approved" ? "background:#E4F3EC;color:#0F6B3E" : r.status === "Rejected" ? "background:#FDE8E8;color:#B42318" : "background:#FBF0DC;color:#8A5B00"}">${esc(r.status)}</span></div>
+      <p class="text-xs text-slate-500 mt-1">${esc(r.reason)}</p>
+      ${r.decision_note ? `<p class="text-xs text-slate-400 mt-1">HR note: ${esc(r.decision_note)}</p>` : ""}</div>`).join("");
+  } catch (e) { toast(e.message); }
+}
+$("open-new-reg").onclick = () => openRegForm();
+$("cancel-reg").onclick = () => { $("reg-panel").classList.add("hidden"); $("reg-form").reset(); $("reg-error").classList.add("hidden"); };
+$("reg-form").onsubmit = async ev => {
+  ev.preventDefault();
+  const body = { date: $("reg-date").value, requested_status: $("reg-status").value, reason: $("reg-reason").value.trim() };
+  const err = $("reg-error"), btn = $("reg-submit");
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Submitting…";
+  try { await api("/api/self/regularization", { method: "POST", body }); toast("Request submitted."); $("cancel-reg").click(); await loadRegularization(); }
+  catch (e) { err.textContent = e.message; err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Submit request"; }
+};
+
+/* ---------- payslip ---------- */
+async function loadPayslip() {
+  try {
+    const d = await api(`/api/self/payslip?month=${$("pay-month").value}`);
+    const p = d.payslip;
+    $("payslip-empty").classList.add("hidden"); $("payslip-card").classList.remove("hidden"); $("print-payslip").classList.remove("hidden");
+    $("ps-month").textContent = new Date($("pay-month").value + "-01").toLocaleString("en-US", { month: "long", year: "numeric" });
+    $("ps-name").textContent = `${p.employee_name} (${p.employee_id})`;
+    $("ps-hotel").textContent = state.employee.hotel_name || "—";
+    $("ps-days").textContent = `${p.payable_days} of ${p.days_in_month}`;
+    $("ps-rate").textContent = fmtMoney(p.per_day_rate);
+    $("ps-gross").textContent = fmtMoney(p.gross_pay);
+    $("ps-net").textContent = fmtMoney(p.net_pay ?? p.gross_pay);
+  } catch (e) {
+    $("payslip-card").classList.add("hidden"); $("print-payslip").classList.add("hidden");
+    $("payslip-empty").classList.remove("hidden"); $("payslip-empty").textContent = e.status === 404 ? "No payslip for this month yet." : e.message;
+  }
+}
+$("pay-month").onchange = loadPayslip;
+$("print-payslip").onclick = () => window.print();
+
+boot();
+</script>
+</body>
+</html>

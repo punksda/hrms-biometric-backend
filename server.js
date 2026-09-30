@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
 const path = require("path");
+const crypto = require("crypto");
 require("dotenv").config();
 
 const app = express();
@@ -25,6 +26,9 @@ app.use(express.json({ limit: "10mb" }));
 // service, at the same URL as the API. Visiting the backend's root URL
 // now shows the actual HRMS dashboard instead of nothing.
 app.use(express.static(path.join(__dirname, "public")));
+
+// Clean URL for the employee self-service portal — same server, separate page.
+app.get("/employee", (req, res) => res.sendFile(path.join(__dirname, "public", "employee.html")));
 
 // ---------------------------------------------------------------------
 // Schema + one-time seed. Runs on every startup; all statements are
@@ -89,6 +93,50 @@ async function initDb() {
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS exit_note TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ffs_amount NUMERIC;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ffs_status TEXT DEFAULT '';`);
+
+  // Employee self-service login. password_hash/password_salt are set the
+  // first time someone actually changes their password (see below); until
+  // then must_reset_password stays true and login is checked against the
+  // one shared "first login" password in settings instead, so every new
+  // employee can log in immediately without HR setting anything per person.
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_salt TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS must_reset_password BOOLEAN DEFAULT true;`);
+
+  // An employee's own request to take leave. Doesn't touch attendance by
+  // itself — only approving it (by HR/admin, in the main dashboard) writes
+  // an attendance_overrides row for each date in the range.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leave_requests (
+      id SERIAL PRIMARY KEY,
+      employee_id TEXT NOT NULL,
+      leave_type TEXT NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      reason TEXT DEFAULT '',
+      status TEXT DEFAULT 'Pending',
+      requested_at TIMESTAMP DEFAULT now(),
+      decided_at TIMESTAMP,
+      decision_note TEXT DEFAULT ''
+    );
+  `);
+
+  // An employee's own request to have a specific day corrected — typically
+  // because they forgot to punch the biometric device. Approving it (by
+  // HR/admin) writes an attendance_overrides row for that one date.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS regularization_requests (
+      id SERIAL PRIMARY KEY,
+      employee_id TEXT NOT NULL,
+      date DATE NOT NULL,
+      reason TEXT NOT NULL,
+      requested_status TEXT DEFAULT 'Present',
+      status TEXT DEFAULT 'Pending',
+      requested_at TIMESTAMP DEFAULT now(),
+      decided_at TIMESTAMP,
+      decision_note TEXT DEFAULT ''
+    );
+  `);
 
   // A running log of every salary change, so a gross-salary increase can
   // require — and keep a record of — a reason (promotion, annual
@@ -1604,6 +1652,340 @@ app.get("/api/leaves", async (req, res) => {
     console.error("GET /api/leaves failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
+});
+
+// ---------------------------------------------------------------------
+// Employee self-service: login, password, attendance, leave requests,
+// regularization requests, payslip data. Every /api/self/* route below
+// (other than login) requires a valid token from that login.
+// ---------------------------------------------------------------------
+
+// Small, dependency-free password hashing (Node's built-in scrypt) and
+// signed tokens (HMAC), so this doesn't add any new npm package to the
+// build — nothing that could fail to install on Render.
+const TOKEN_SECRET = process.env.EMPLOYEE_TOKEN_SECRET || process.env.BIOMETRIC_WEBHOOK_SECRET || "voyage-hrms-dev-secret";
+const TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — a phone shouldn't need to re-login often
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return { hash, salt };
+}
+function verifyPassword(password, hash, salt) {
+  if (!hash || !salt) return false;
+  const check = crypto.scryptSync(password, salt, 64).toString("hex");
+  // Fixed-time comparison so response timing can't leak how much of the
+  // password was correct.
+  const a = Buffer.from(check, "hex"), b = Buffer.from(hash, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function signToken(payload) {
+  const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + TOKEN_LIFETIME_MS })).toString("base64url");
+  const sig = crypto.createHmac("sha256", TOKEN_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+function verifyToken(token) {
+  if (!token || !token.includes(".")) return null;
+  const [body, sig] = token.split(".");
+  const expected = crypto.createHmac("sha256", TOKEN_SECRET).update(body).digest("base64url");
+  if (sig !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (!payload.exp || payload.exp < Date.now()) return null;
+    return payload;
+  } catch { return null; }
+}
+// Attaches req.employeeId from the Authorization: Bearer <token> header,
+// or rejects the request with 401 if it's missing, malformed, or expired.
+async function requireEmployeeAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const payload = verifyToken(token);
+  if (!payload || !payload.employee_id) {
+    return res.status(401).json({ status: "error", message: "Please log in again." });
+  }
+  const r = await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees WHERE id = $1`, [payload.employee_id]);
+  if (!r.rows.length) return res.status(401).json({ status: "error", message: "Please log in again." });
+  req.employee = r.rows[0];
+  next();
+}
+
+// Employee ID is the username. On someone's very first login there's no
+// password_hash yet, so the shared "first login" password (set by HR,
+// stored in settings) is accepted instead — but the response always says
+// must_reset: true in that case, and the employee portal is built to force
+// a password change before anything else is usable.
+app.post("/api/self/login", async (req, res) => {
+  try {
+    const id = req.body && req.body.employee_id ? String(req.body.employee_id).trim() : "";
+    const password = req.body && req.body.password ? String(req.body.password) : "";
+    if (!id || !password) return res.status(400).json({ status: "error", message: "Employee ID and password are required." });
+    const r = await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees WHERE id = $1`, [id]);
+    if (!r.rows.length) return res.status(401).json({ status: "error", message: "Employee ID or password is incorrect." });
+    const emp = r.rows[0];
+    if (emp.status === "Exited") return res.status(403).json({ status: "error", message: "This account is no longer active." });
+    let ok;
+    if (emp.must_reset_password) {
+      const defaultPassword = await getSetting("default_employee_password", "Welcome@123");
+      ok = password === defaultPassword;
+    } else {
+      ok = verifyPassword(password, emp.password_hash, emp.password_salt);
+    }
+    if (!ok) return res.status(401).json({ status: "error", message: "Employee ID or password is incorrect." });
+    const token = signToken({ employee_id: emp.id });
+    res.json({ status: "success", token, must_reset_password: !!emp.must_reset_password,
+      employee: { id: emp.id, name: emp.name, hotel_id: emp.hotel_id, role: emp.role } });
+  } catch (error) {
+    console.error("POST /api/self/login failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Sets a new password and clears must_reset_password. Called immediately
+// after first login (forced by the employee portal before anything else
+// is usable), and also available any time after as "change password."
+app.post("/api/self/set-password", requireEmployeeAuth, async (req, res) => {
+  try {
+    const pw = req.body && req.body.new_password ? String(req.body.new_password) : "";
+    if (pw.length < 6) return res.status(400).json({ status: "error", message: "Password must be at least 6 characters." });
+    const { hash, salt } = hashPassword(pw);
+    await pool.query("UPDATE employees SET password_hash = $1, password_salt = $2, must_reset_password = false WHERE id = $3",
+      [hash, salt, req.employee.id]);
+    res.json({ status: "success" });
+  } catch (error) {
+    console.error("POST /api/self/set-password failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+app.get("/api/self/me", requireEmployeeAuth, async (req, res) => {
+  const emp = req.employee;
+  const hotel = (await pool.query("SELECT name FROM hotels WHERE id = $1", [emp.hotel_id])).rows[0];
+  res.json({ status: "success", employee: { id: emp.id, name: emp.name, role: emp.role, hotel_id: emp.hotel_id,
+    hotel_name: hotel ? hotel.name : "", date_of_joining: emp.date_of_joining } });
+});
+
+// Query param: month ("YYYY-MM"). Reuses the exact same engine the admin
+// dashboard uses, so an employee always sees the identical numbers HR does.
+app.get("/api/self/attendance", requireEmployeeAuth, async (req, res) => {
+  try {
+    const month = req.query.month || todayIst().slice(0, 7);
+    const all = await computeAttendance(req.employee.hotel_id, month);
+    res.json({ status: "success", month, records: all.filter(r => r.employee_id === req.employee.id) });
+  } catch (error) {
+    console.error("GET /api/self/attendance failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Query param: month ("YYYY-MM"). Same balances the Leaves tab shows.
+app.get("/api/self/leaves", requireEmployeeAuth, async (req, res) => {
+  try {
+    const month = req.query.month || todayIst().slice(0, 7);
+    const result = await computeLeaves(req.employee.hotel_id, month);
+    const mine = result.records.find(r => r.employee_id === req.employee.id) || { balances: {}, comp_off: null };
+    res.json({ status: "success", month, leave_types: result.leave_types, balances: mine.balances, comp_off: mine.comp_off });
+  } catch (error) {
+    console.error("GET /api/self/leaves failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Query param: month ("YYYY-MM"). Same figures the Payroll tab computes.
+app.get("/api/self/payslip", requireEmployeeAuth, async (req, res) => {
+  try {
+    const month = req.query.month || todayIst().slice(0, 7);
+    const all = await computePayroll(req.employee.hotel_id, month);
+    const mine = all.find(r => r.employee_id === req.employee.id);
+    if (!mine) return res.status(404).json({ status: "error", message: "No payroll data for that month yet." });
+    res.json({ status: "success", month, payslip: mine });
+  } catch (error) {
+    console.error("GET /api/self/payslip failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Submits a leave request. Doesn't touch attendance — sits as Pending
+// until HR approves it from the main dashboard.
+app.post("/api/self/leave-requests", requireEmployeeAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const leaveType = body.leave_type ? String(body.leave_type).trim() : "";
+    const start = ymd(body.start_date), end = ymd(body.end_date);
+    const reason = body.reason ? String(body.reason).trim() : "";
+    if (!leaveType || !start || !end) return res.status(400).json({ status: "error", message: "Leave type, start date and end date are required." });
+    if (end < start) return res.status(400).json({ status: "error", message: "End date can't be before the start date." });
+    const validType = leaveType === "Comp Off" || (await pool.query("SELECT 1 FROM leave_types WHERE name = $1", [leaveType])).rows.length;
+    if (!validType) return res.status(400).json({ status: "error", message: `"${leaveType}" isn't a recognised leave type.` });
+    const r = await pool.query(
+      `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, reason) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.employee.id, leaveType, start, end, reason]
+    );
+    res.json({ status: "success", request: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/self/leave-requests failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+app.get("/api/self/leave-requests", requireEmployeeAuth, async (req, res) => {
+  const r = await pool.query("SELECT * FROM leave_requests WHERE employee_id = $1 ORDER BY requested_at DESC", [req.employee.id]);
+  res.json({ status: "success", records: r.rows });
+});
+
+// Submits a regularization request for one day (typically a missed punch).
+// requested_status defaults to "Present" — what approving it will set the
+// day to — but an employee can ask for a different status if that fits
+// better (e.g. they were actually on leave and forgot to mark it).
+app.post("/api/self/regularization", requireEmployeeAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const date = ymd(body.date);
+    const reason = body.reason ? String(body.reason).trim() : "";
+    const requestedStatus = body.requested_status ? String(body.requested_status).trim() : "Present";
+    if (!date) return res.status(400).json({ status: "error", message: "A date is required." });
+    if (!reason) return res.status(400).json({ status: "error", message: "Please give a reason." });
+    const r = await pool.query(
+      `INSERT INTO regularization_requests (employee_id, date, reason, requested_status) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.employee.id, date, reason, requestedStatus]
+    );
+    res.json({ status: "success", request: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/self/regularization failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+app.get("/api/self/regularization", requireEmployeeAuth, async (req, res) => {
+  const r = await pool.query("SELECT * FROM regularization_requests WHERE employee_id = $1 ORDER BY requested_at DESC", [req.employee.id]);
+  res.json({ status: "success", records: r.rows });
+});
+
+// ---------------------------------------------------------------------
+// HR/admin side of the above: the approval queue, and account controls.
+// ---------------------------------------------------------------------
+
+// Query param: status ("Pending" by default, or "all"). Joins in the
+// employee's name/hotel so the approval queue doesn't need a second call.
+app.get("/api/leave-requests", async (req, res) => {
+  try {
+    const status = req.query.status || "Pending";
+    const where = status === "all" ? "" : "WHERE lr.status = $1";
+    const params = status === "all" ? [] : [status];
+    const r = await pool.query(
+      `SELECT lr.*, e.name AS employee_name, e.hotel_id FROM leave_requests lr
+       JOIN employees e ON e.id = lr.employee_id ${where} ORDER BY lr.requested_at DESC`, params);
+    res.json({ status: "success", records: r.rows });
+  } catch (error) {
+    console.error("GET /api/leave-requests failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Body: { decision: "Approved" | "Rejected", note }. Approving writes an
+// attendance_overrides row for every date in the request's range.
+app.post("/api/leave-requests/:id/decide", async (req, res) => {
+  try {
+    const decision = req.body && req.body.decision;
+    if (!["Approved", "Rejected"].includes(decision)) return res.status(400).json({ status: "error", message: "decision must be Approved or Rejected." });
+    const existing = await pool.query("SELECT * FROM leave_requests WHERE id = $1", [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Request not found." });
+    const lr = existing.rows[0];
+    if (lr.status !== "Pending") return res.status(409).json({ status: "error", message: `This request was already ${lr.status.toLowerCase()}.` });
+    if (decision === "Approved") {
+      const dates = [];
+      eachDate(ymd(lr.start_date), ymd(lr.end_date), d => dates.push(d));
+      for (const date of dates) {
+        await pool.query(
+          `INSERT INTO attendance_overrides (employee_id, date, status) VALUES ($1,$2,$3)
+           ON CONFLICT (employee_id, date) DO UPDATE SET status = EXCLUDED.status`,
+          [lr.employee_id, date, lr.leave_type]
+        );
+      }
+    }
+    const r = await pool.query(
+      "UPDATE leave_requests SET status = $2, decided_at = now(), decision_note = $3 WHERE id = $1 RETURNING *",
+      [req.params.id, decision, req.body.note ? String(req.body.note).trim() : ""]
+    );
+    res.json({ status: "success", request: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/leave-requests/:id/decide failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+app.get("/api/regularization-requests", async (req, res) => {
+  try {
+    const status = req.query.status || "Pending";
+    const where = status === "all" ? "" : "WHERE rr.status = $1";
+    const params = status === "all" ? [] : [status];
+    const r = await pool.query(
+      `SELECT rr.*, e.name AS employee_name, e.hotel_id FROM regularization_requests rr
+       JOIN employees e ON e.id = rr.employee_id ${where} ORDER BY rr.requested_at DESC`, params);
+    res.json({ status: "success", records: r.rows });
+  } catch (error) {
+    console.error("GET /api/regularization-requests failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Body: { decision: "Approved" | "Rejected", note, status_to_apply }.
+// status_to_apply lets HR override what the employee originally asked for
+// (defaults to whatever they requested). Approving writes one
+// attendance_overrides row for that single date.
+app.post("/api/regularization-requests/:id/decide", async (req, res) => {
+  try {
+    const decision = req.body && req.body.decision;
+    if (!["Approved", "Rejected"].includes(decision)) return res.status(400).json({ status: "error", message: "decision must be Approved or Rejected." });
+    const existing = await pool.query("SELECT * FROM regularization_requests WHERE id = $1", [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Request not found." });
+    const rr = existing.rows[0];
+    if (rr.status !== "Pending") return res.status(409).json({ status: "error", message: `This request was already ${rr.status.toLowerCase()}.` });
+    if (decision === "Approved") {
+      const statusToApply = req.body.status_to_apply ? String(req.body.status_to_apply).trim() : rr.requested_status;
+      await pool.query(
+        `INSERT INTO attendance_overrides (employee_id, date, status) VALUES ($1,$2,$3)
+         ON CONFLICT (employee_id, date) DO UPDATE SET status = EXCLUDED.status`,
+        [rr.employee_id, ymd(rr.date), statusToApply]
+      );
+    }
+    const r = await pool.query(
+      "UPDATE regularization_requests SET status = $2, decided_at = now(), decision_note = $3 WHERE id = $1 RETURNING *",
+      [req.params.id, decision, req.body.note ? String(req.body.note).trim() : ""]
+    );
+    res.json({ status: "success", request: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/regularization-requests/:id/decide failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// HR resetting someone's password (they forgot it, or it's a new hire who
+// needs to log in again with the shared first-login password).
+app.post("/api/employees/:id/reset-password", async (req, res) => {
+  try {
+    const r = await pool.query(
+      "UPDATE employees SET password_hash = '', password_salt = '', must_reset_password = true WHERE id = $1 RETURNING id",
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ status: "error", message: "Employee not found." });
+    res.json({ status: "success" });
+  } catch (error) {
+    console.error("POST /api/employees/:id/reset-password failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// The one shared password every new employee (or anyone HR has reset)
+// logs in with the first time, before being forced to set their own.
+app.get("/api/settings/default-password", async (req, res) => {
+  res.json({ status: "success", default_employee_password: await getSetting("default_employee_password", "Welcome@123") });
+});
+app.post("/api/settings/default-password", async (req, res) => {
+  const pw = req.body && req.body.default_employee_password ? String(req.body.default_employee_password).trim() : "";
+  if (pw.length < 6) return res.status(400).json({ status: "error", message: "Password must be at least 6 characters." });
+  await setSetting("default_employee_password", pw);
+  res.json({ status: "success" });
 });
 
 // ---------------------------------------------------------------------
