@@ -79,6 +79,32 @@ async function initDb() {
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ifsc_code TEXT DEFAULT '';`);
+  // Exit record. last_working_day is also used as a hard stop date for
+  // attendance/payroll/leave computation (like date_of_joining is a start
+  // bound) — once past it, the employee simply produces no further rows,
+  // so they drop off future Attendance/Roster/Payroll/Leaves automatically
+  // without needing to be deleted or hidden by hand.
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS last_working_day DATE;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS exit_reason TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS exit_note TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ffs_amount NUMERIC;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ffs_status TEXT DEFAULT '';`);
+
+  // A running log of every salary change, so a gross-salary increase can
+  // require — and keep a record of — a reason (promotion, annual
+  // increment, etc). Decreases/corrections are logged too, with an
+  // optional reason, for a complete history either way.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS salary_increments (
+      id SERIAL PRIMARY KEY,
+      employee_id TEXT NOT NULL,
+      old_salary NUMERIC,
+      new_salary NUMERIC,
+      reason TEXT DEFAULT '',
+      note TEXT DEFAULT '',
+      changed_at TIMESTAMP DEFAULT now()
+    );
+  `);
 
   // Per-employee, per-month manual payroll entries: arrears, ad-hoc
   // deductions, advance recovery, salary hold, and full & final settlement.
@@ -316,6 +342,7 @@ function walkEmployee(emp, data, denseStart, endDate) {
   const roster = data.roster || {}, punchMap = data.punchMap || {}, overrides = data.overrides || {};
   const comp = data.compOpening || null;
   const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
+  const lwd = emp.last_working_day ? ymd(emp.last_working_day) : null;
 
   const dates = new Set();
   [roster, punchMap, overrides].forEach(o => Object.keys(o).forEach(d => { if (d < denseStart && d <= endDate) dates.add(d); }));
@@ -327,6 +354,7 @@ function walkEmployee(emp, data, denseStart, endDate) {
   const rows = [];
   for (const date of sorted) {
     if (doj && date < doj) continue;
+    if (lwd && date > lwd) continue;
     const counts = !compStart || date >= compStart;
     const pd = summarisePunches(punchMap[date]);
     const rosterType = roster[date];
@@ -420,7 +448,8 @@ function ptForSlab(grossP, slabs) {
 const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent", "half day", "on duty"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
   to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
-  fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code`;
+  fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
+  to_char(last_working_day, 'YYYY-MM-DD') AS last_working_day, exit_reason, exit_note, ffs_amount, ffs_status`;
 
 async function getPayrollRates() {
   const [ceiling, pfRate, esiEmpRate, esiEmplrRate, ptSlabs] = await Promise.all([
@@ -432,10 +461,21 @@ async function getPayrollRates() {
     esi_employee_rate: Number(esiEmpRate), esi_employer_rate: Number(esiEmplrRate), pt_slabs: JSON.parse(ptSlabs) };
 }
 
-async function getScopeEmployees(hotelId) {
-  const r = (hotelId === "all" || !hotelId)
-    ? await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees ORDER BY id`)
-    : await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees WHERE hotel_id = $1 ORDER BY id`, [hotelId]);
+// month (optional, "YYYY-MM"): when given, an employee who exited before
+// that month started is left out entirely — that's what makes them stop
+// appearing in Attendance/Roster/Payroll/Leaves for months after they left,
+// without ever deleting their record. Leave month blank to get everyone
+// (used by the Employees tab itself, where past exits still need to show).
+async function getScopeEmployees(hotelId, month) {
+  const scopeClause = hotelId === "all" || !hotelId ? "" : "WHERE hotel_id = $1";
+  const params = hotelId === "all" || !hotelId ? [] : [hotelId];
+  let sql = `SELECT ${EMPLOYEE_COLS} FROM employees ${scopeClause}`;
+  if (month) {
+    const monthStart = `${month}-01`;
+    sql += `${scopeClause ? " AND" : " WHERE"} (status <> 'Exited' OR last_working_day IS NULL OR last_working_day >= $${params.length + 1}::date)`;
+    params.push(monthStart);
+  }
+  const r = await pool.query(sql + " ORDER BY id", params);
   return r.rows;
 }
 async function getSetting(key, fallback) {
@@ -485,7 +525,7 @@ async function loadAttendanceContext(employees) {
 }
 
 async function computeAttendance(hotelId, month) {
-  const employees = await getScopeEmployees(hotelId);
+  const employees = await getScopeEmployees(hotelId, month);
   if (!employees.length) return [];
   const monthStart = `${month}-01`;
   const monthEnd = `${month}-${pad2(daysInMonthOf(month))}`;
@@ -512,7 +552,7 @@ async function computeAttendance(hotelId, month) {
 // ESI always rounds up, and both only apply when the employee is flagged
 // pf_applicable / esi_applicable.
 async function computePayroll(hotelId, month) {
-  const employees = await getScopeEmployees(hotelId);
+  const employees = await getScopeEmployees(hotelId, month);
   if (!employees.length) return [];
   const attendance = await computeAttendance(hotelId, month);
   const types = (await pool.query("SELECT name, paid FROM leave_types")).rows;
@@ -573,7 +613,7 @@ async function computePayroll(hotelId, month) {
 // Leave balances and comp-off for everyone in scope, as of the end of the
 // selected month (or today if that month is still running).
 async function computeLeaves(hotelId, month) {
-  const employees = await getScopeEmployees(hotelId);
+  const employees = await getScopeEmployees(hotelId, month);
   const types = (await pool.query("SELECT name, code, annual_days, paid FROM leave_types ORDER BY name"))
     .rows.map(t => ({ name: t.name, code: t.code, annual_days: Number(t.annual_days), paid: t.paid }));
   const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
@@ -1019,20 +1059,38 @@ app.post("/api/employees", async (req, res) => {
 // current value. Body: any of { name, hotel_id, role, monthly_salary,
 // date_of_joining, machine_user_id, status, property_code, fixed_basic_salary,
 // pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code }.
+// Edits an existing employee's core fields. Any field left out keeps its
+// current value. Body: any of { name, hotel_id, role, monthly_salary,
+// date_of_joining, machine_user_id, status, property_code, fixed_basic_salary,
+// pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
+// last_working_day, exit_reason, exit_note, ffs_amount, ffs_status }.
+//
+// If monthly_salary (gross salary) is being raised, increment_reason is
+// required (e.g. "Promotion", "Annual Increment") — the edit is rejected
+// without it. Every actual salary change, up or down, is logged to
+// salary_increments for the Increment Report, whether or not a reason was
+// required for it.
 app.patch("/api/employees/:id", async (req, res) => {
   try {
     const body = req.body || {};
     const existing = await pool.query("SELECT * FROM employees WHERE id = $1", [req.params.id]);
     if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
     const current = existing.rows[0];
-    const salary = body.monthly_salary !== undefined && !isNaN(Number(body.monthly_salary)) ? Number(body.monthly_salary) : current.monthly_salary;
+    const salary = body.monthly_salary !== undefined && !isNaN(Number(body.monthly_salary)) ? Number(body.monthly_salary) : Number(current.monthly_salary);
+    const currentSalary = Number(current.monthly_salary);
+    if (salary > currentSalary && !(body.increment_reason && String(body.increment_reason).trim())) {
+      return res.status(400).json({ status: "error", message: "Please give a reason for the salary increase (e.g. Promotion, Annual Increment)." });
+    }
     const basicSalary = body.fixed_basic_salary !== undefined && !isNaN(Number(body.fixed_basic_salary)) ? Number(body.fixed_basic_salary) : current.fixed_basic_salary;
     const pfApplicable = body.pf_applicable !== undefined ? !!body.pf_applicable : current.pf_applicable;
     const esiApplicable = body.esi_applicable !== undefined ? !!body.esi_applicable : current.esi_applicable;
     const doj = body.date_of_joining !== undefined ? ymd(body.date_of_joining) : current.date_of_joining;
+    const lwd = body.last_working_day !== undefined ? ymd(body.last_working_day) : current.last_working_day;
+    const ffsAmount = body.ffs_amount !== undefined ? (body.ffs_amount === null || body.ffs_amount === "" ? null : Number(body.ffs_amount)) : current.ffs_amount;
     const r = await pool.query(
       `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9,
-         fixed_basic_salary=$10, pf_applicable=$11, esi_applicable=$12, bank_name=$13, bank_account_no=$14, ifsc_code=$15
+         fixed_basic_salary=$10, pf_applicable=$11, esi_applicable=$12, bank_name=$13, bank_account_no=$14, ifsc_code=$15,
+         last_working_day=$16, exit_reason=$17, exit_note=$18, ffs_amount=$19, ffs_status=$20
        WHERE id=$1 RETURNING *`,
       [
         req.params.id,
@@ -1046,12 +1104,88 @@ app.patch("/api/employees/:id", async (req, res) => {
         basicSalary, pfApplicable, esiApplicable,
         body.bank_name !== undefined ? String(body.bank_name).trim() : current.bank_name,
         body.bank_account_no !== undefined ? String(body.bank_account_no).trim() : current.bank_account_no,
-        body.ifsc_code !== undefined ? String(body.ifsc_code).trim().toUpperCase() : current.ifsc_code
+        body.ifsc_code !== undefined ? String(body.ifsc_code).trim().toUpperCase() : current.ifsc_code,
+        lwd,
+        body.exit_reason !== undefined ? String(body.exit_reason).trim() : current.exit_reason,
+        body.exit_note !== undefined ? String(body.exit_note).trim() : current.exit_note,
+        ffsAmount,
+        body.ffs_status !== undefined ? String(body.ffs_status).trim() : current.ffs_status
       ]
     );
+    if (salary !== currentSalary) {
+      await pool.query(
+        `INSERT INTO salary_increments (employee_id, old_salary, new_salary, reason, note) VALUES ($1,$2,$3,$4,$5)`,
+        [req.params.id, currentSalary, salary,
+         body.increment_reason ? String(body.increment_reason).trim() : (salary > currentSalary ? "" : "Salary revised"),
+         body.increment_note ? String(body.increment_note).trim() : ""]
+      );
+    }
     res.json({ status: "success", employee: r.rows[0] });
   } catch (error) {
     console.error("PATCH /api/employees/:id failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Marks an employee as exited: last working day (required), a reason
+// (required), an optional note, and optional full & final settlement
+// amount/status. From this point the engine stops generating attendance,
+// roster, leave or payroll rows for them past their last working day, so
+// they naturally drop out of future months without being deleted.
+app.post("/api/employees/:id/exit", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const lwd = ymd(body.last_working_day);
+    const reason = body.exit_reason ? String(body.exit_reason).trim() : "";
+    if (!lwd) return res.status(400).json({ status: "error", message: "last_working_day (a valid date) is required." });
+    if (!reason) return res.status(400).json({ status: "error", message: "exit_reason is required." });
+    const existing = await pool.query("SELECT id FROM employees WHERE id = $1", [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
+    const ffsAmount = body.ffs_amount === undefined || body.ffs_amount === null || body.ffs_amount === "" ? null : Number(body.ffs_amount);
+    const r = await pool.query(
+      `UPDATE employees SET status = 'Exited', last_working_day = $2, exit_reason = $3, exit_note = $4, ffs_amount = $5, ffs_status = $6
+       WHERE id = $1 RETURNING *`,
+      [req.params.id, lwd, reason, body.exit_note ? String(body.exit_note).trim() : "", ffsAmount, body.ffs_status ? String(body.ffs_status).trim() : "Pending"]
+    );
+    res.json({ status: "success", employee: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/employees/:id/exit failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Undoes an exit — sets the employee back to Active and clears their exit
+// details, for when one was marked by mistake.
+app.post("/api/employees/:id/reactivate", async (req, res) => {
+  try {
+    const r = await pool.query(
+      `UPDATE employees SET status = 'Active', last_working_day = NULL, exit_reason = '', exit_note = '', ffs_amount = NULL, ffs_status = ''
+       WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
+    res.json({ status: "success", employee: r.rows[0] });
+  } catch (error) {
+    console.error("POST /api/employees/:id/reactivate failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Every salary change on record, newest first — the Increment Report.
+app.get("/api/increments", async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT si.id, si.employee_id, e.name AS employee_name, e.hotel_id,
+             si.old_salary, si.new_salary, si.reason, si.note,
+             to_char(si.changed_at, 'YYYY-MM-DD HH24:MI') AS changed_at
+      FROM salary_increments si
+      LEFT JOIN employees e ON e.id = si.employee_id
+      ORDER BY si.changed_at DESC
+      LIMIT 1000
+    `);
+    res.json({ status: "success", records: r.rows });
+  } catch (error) {
+    console.error("GET /api/increments failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
 });
@@ -1167,7 +1301,9 @@ app.post("/api/employees/:id/mapping", async (req, res) => {
   }
 });
 
-// Set or update one employee's monthly salary, used by payroll.
+// Set or update one employee's monthly salary, used by the Payroll tab's
+// quick inline editor. Same rule as PATCH: raising it needs increment_reason,
+// and every change (either direction) is logged for the Increment Report.
 app.post("/api/employees/:id/salary", async (req, res) => {
   try {
     const raw = req.body && req.body.monthly_salary;
@@ -1175,11 +1311,23 @@ app.post("/api/employees/:id/salary", async (req, res) => {
     if (raw === undefined || raw === null || isNaN(salary) || salary < 0) {
       return res.status(400).json({ status: "error", message: "monthly_salary must be a non-negative number." });
     }
+    const existing = await pool.query("SELECT monthly_salary FROM employees WHERE id = $1", [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
+    const currentSalary = Number(existing.rows[0].monthly_salary);
+    const reason = req.body && req.body.increment_reason ? String(req.body.increment_reason).trim() : "";
+    if (salary > currentSalary && !reason) {
+      return res.status(400).json({ status: "error", message: "Please give a reason for the salary increase (e.g. Promotion, Annual Increment)." });
+    }
     const r = await pool.query(
       "UPDATE employees SET monthly_salary = $1 WHERE id = $2 RETURNING *",
       [salary, req.params.id]
     );
-    if (!r.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
+    if (salary !== currentSalary) {
+      await pool.query(
+        `INSERT INTO salary_increments (employee_id, old_salary, new_salary, reason) VALUES ($1,$2,$3,$4)`,
+        [req.params.id, currentSalary, salary, reason || "Salary revised"]
+      );
+    }
     res.json({ status: "success", employee: r.rows[0] });
   } catch (error) {
     console.error("POST /api/employees/:id/salary failed:", error);

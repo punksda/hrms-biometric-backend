@@ -41,6 +41,7 @@
       <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="leaves"><i data-lucide="calendar-heart" class="h-4 w-4"></i>Leaves</button>
       <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="payroll"><i data-lucide="wallet-cards" class="h-4 w-4"></i>Payroll</button>
       <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="biometric"><i data-lucide="fingerprint" class="h-4 w-4"></i>Biometric Devices</button>
+      <button class="nav-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold" data-view="exit"><i data-lucide="log-out" class="h-4 w-4"></i>Exit</button>
     </nav>
     <div class="mt-auto rounded-xl border border-white/10 bg-white/5 p-3 text-xs">
       <span id="side-dot" class="mr-2 inline-block h-2 w-2 rounded-full bg-amber-400"></span><span id="side-status">Checking backend connection</span>
@@ -107,16 +108,30 @@
         <p class="text-sm font-semibold text-indigo-600">People directory</p>
         <h2 class="section-title text-3xl font-bold">Employees</h2>
         <section class="panel mt-6 rounded-2xl bg-white p-6">
-          <div class="flex flex-wrap justify-end gap-2">
-            <input id="employees-file" type="file" accept=".csv" class="hidden">
-            <button id="add-employee" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Add Employee</button>
-            <button id="import-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Import CSV</button>
-            <button id="download-employee-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
-            <button id="refresh-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
-            <button id="delete-all-employees" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete All</button>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <label class="flex items-center gap-2 text-sm font-semibold text-slate-600">Show
+              <select id="employee-status-filter" class="rounded-lg border p-2 text-sm">
+                <option value="active" selected>Active only</option>
+                <option value="all">All (incl. exited)</option>
+                <option value="exited">Exited only</option>
+              </select>
+            </label>
+            <div class="flex flex-wrap justify-end gap-2">
+              <input id="employees-file" type="file" accept=".csv" class="hidden">
+              <button id="add-employee" class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white">Add Employee</button>
+              <button id="import-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Import CSV</button>
+              <button id="download-employee-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
+              <button id="refresh-employees" class="rounded-lg border px-3 py-2 text-sm font-bold">Refresh</button>
+              <button id="delete-all-employees" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">Delete All</button>
+            </div>
           </div>
           <form id="add-employee-form" class="mt-4 hidden rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 id="employee-form-title" class="text-sm font-bold text-indigo-700">Add Employee</h4>
+              <p id="employee-form-hint" class="hidden text-xs text-slate-500">Raising Gross Salary will ask for a reason — it's logged in Salary Revisions below.</p>
+            </div>
             <div class="grid gap-3 md:grid-cols-3">
+              <input type="hidden" id="new-emp-editing-id">
               <div><label class="mb-1 block text-sm font-semibold">Employee Code</label><input id="new-emp-id" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. VCOR045"></div>
               <div><label class="mb-1 block text-sm font-semibold">Name</label><input id="new-emp-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Hotel</label><select id="new-emp-hotel" class="w-full rounded-lg border p-2.5 text-sm"><option value="">Select hotel</option></select></div>
@@ -127,6 +142,18 @@
               <div class="md:col-span-3 mt-1 border-t border-indigo-100 pt-3 text-xs font-bold uppercase tracking-wide text-indigo-600">Salary</div>
               <div><label class="mb-1 block text-sm font-semibold">Gross Salary <span class="font-normal text-slate-500">(per month)</span></label><input id="new-emp-salary" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Fixed Basic Salary <span class="font-normal text-slate-500">(PF/ESI are calculated on this)</span></label><input id="new-emp-basic" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div id="new-emp-increment-wrap" class="hidden md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p class="mb-2 text-xs font-bold text-amber-800">You're raising the Gross Salary — a reason is required.</p>
+                <div class="grid gap-3 md:grid-cols-2">
+                  <div><label class="mb-1 block text-xs font-semibold">Reason</label>
+                    <select id="new-emp-increment-reason" class="w-full rounded-lg border p-2 text-sm">
+                      <option value="">Select reason</option>
+                      <option>Promotion</option><option>Annual Increment</option><option>Performance-based Increase</option><option>Correction</option><option>Other</option>
+                    </select>
+                  </div>
+                  <div><label class="mb-1 block text-xs font-semibold">Note <span class="font-normal text-slate-500">(optional)</span></label><input id="new-emp-increment-note" class="w-full rounded-lg border p-2 text-sm"></div>
+                </div>
+              </div>
               <div class="flex items-end gap-4 pb-1">
                 <label class="flex items-center gap-2 text-sm font-semibold"><input id="new-emp-pf" type="checkbox" checked class="h-4 w-4 rounded border-slate-300">PF applicable</label>
                 <label class="flex items-center gap-2 text-sm font-semibold"><input id="new-emp-esi" type="checkbox" checked class="h-4 w-4 rounded border-slate-300">ESI applicable</label>
@@ -141,8 +168,21 @@
           </form>
           <div id="employee-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No employee records loaded.</div>
           <div id="employee-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[1100px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee Code</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Designation</th><th class="p-3">Card No</th><th class="p-3">Gross Salary</th><th class="p-3">Basic Salary</th><th class="p-3">PF/ESI</th><th class="p-3">Bank Details</th><th class="p-3">Date of Joining</th><th class="p-3">Status</th></tr></thead>
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee Code</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Designation</th><th class="p-3">Card No</th><th class="p-3">Gross Salary</th><th class="p-3">Basic Salary</th><th class="p-3">PF/ESI</th><th class="p-3">Bank Details</th><th class="p-3">Date of Joining</th><th class="p-3">Status</th><th class="p-3">Actions</th></tr></thead>
             <tbody id="employee-table"></tbody>
+          </table></div>
+        </section>
+
+        <section class="panel mt-6 rounded-2xl bg-white p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="max-w-2xl"><h3 class="font-bold">Salary Revisions</h3>
+              <p class="mt-1 text-sm text-slate-600">Every salary change, with the reason given for increases.</p></div>
+            <button id="download-increments" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+          </div>
+          <div id="increments-empty" class="mt-4 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">No salary changes recorded yet.</div>
+          <div id="increments-wrap" class="table-scroll mt-4 hidden"><table class="w-full min-w-[760px] text-left text-sm">
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Date</th><th class="p-3">Employee</th><th class="p-3">Hotel</th><th class="p-3">Old</th><th class="p-3">New</th><th class="p-3">Change</th><th class="p-3">Reason</th></tr></thead>
+            <tbody id="increments-table"></tbody>
           </table></div>
         </section>
       </section>
@@ -313,6 +353,71 @@
         </section>
       </section>
 
+      <!-- EXIT -->
+      <section id="exit" class="tab-view">
+        <p class="text-sm font-semibold text-indigo-600">Offboarding</p>
+        <h2 class="section-title text-3xl font-bold">Exit</h2>
+        <div class="mt-5 flex gap-2">
+          <button class="exit-subview-btn active rounded-lg border px-3 py-2 text-sm font-bold" data-subview="exit-report-view">Exit Report</button>
+          <button class="exit-subview-btn rounded-lg border px-3 py-2 text-sm font-bold" data-subview="exit-staff-view">Exit Staff</button>
+        </div>
+
+        <!-- Exit Report -->
+        <section id="exit-report-view" class="exit-subview mt-4">
+          <section class="panel rounded-2xl bg-white p-6">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="max-w-2xl"><h3 class="font-bold">Exited staff</h3>
+                <p class="mt-1 text-sm text-slate-600">Everyone marked as exited, with their last working day, reason and settlement status.</p></div>
+              <button id="download-exits" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+            </div>
+            <div id="exit-report-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No one has been marked as exited yet.</div>
+            <div id="exit-report-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[900px] text-left text-sm">
+              <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee Code</th><th class="p-3">Name</th><th class="p-3">Hotel</th><th class="p-3">Last Working Day</th><th class="p-3">Reason</th><th class="p-3">F&amp;F Settlement</th><th class="p-3">Status</th><th class="p-3">Actions</th></tr></thead>
+              <tbody id="exit-report-table"></tbody>
+            </table></div>
+          </section>
+        </section>
+
+        <!-- Exit Staff -->
+        <section id="exit-staff-view" class="exit-subview mt-4 hidden">
+          <section class="panel rounded-2xl bg-white p-6">
+            <h3 class="font-bold">Search for staff</h3>
+            <p class="mt-1 text-sm text-slate-600">Find someone by employee code or name to set their exit date, or to update an existing one.</p>
+            <input id="exit-search" type="text" placeholder="Search employee code or name…" class="mt-3 w-full max-w-md rounded-lg border p-2.5 text-sm">
+            <div id="exit-search-results" class="mt-3 max-h-64 divide-y overflow-auto rounded-lg border"></div>
+          </section>
+
+          <section id="exit-form-panel" class="panel mt-4 hidden rounded-2xl border-indigo-100 bg-indigo-50 p-6">
+            <div class="flex items-center justify-between">
+              <h3 id="exit-form-title" class="font-bold text-indigo-700">Exit details</h3>
+              <button id="exit-reactivate" type="button" class="hidden rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700">Cancel exit / Reactivate</button>
+            </div>
+            <form id="exit-form" class="mt-3">
+              <input type="hidden" id="exit-emp-id">
+              <div class="grid gap-3 md:grid-cols-3">
+                <div><label class="mb-1 block text-sm font-semibold">Last Working Day</label><input id="exit-lwd" type="date" class="w-full rounded-lg border p-2.5 text-sm"></div>
+                <div><label class="mb-1 block text-sm font-semibold">Exit Reason</label>
+                  <select id="exit-reason" class="w-full rounded-lg border p-2.5 text-sm">
+                    <option value="">Select reason</option>
+                    <option>Resignation</option><option>Termination</option><option>Absconding</option>
+                    <option>Contract Completed</option><option>Retirement</option><option>Other</option>
+                  </select>
+                </div>
+                <div><label class="mb-1 block text-sm font-semibold">Full &amp; Final Settlement Amount <span class="font-normal text-slate-500">(optional)</span></label><input id="exit-ffs-amount" type="number" min="0" step="0.01" class="w-full rounded-lg border p-2.5 text-sm"></div>
+                <div><label class="mb-1 block text-sm font-semibold">F&amp;F Status</label>
+                  <select id="exit-ffs-status" class="w-full rounded-lg border p-2.5 text-sm">
+                    <option>Pending</option><option>Settled</option>
+                  </select>
+                </div>
+                <div class="md:col-span-2"><label class="mb-1 block text-sm font-semibold">Note <span class="font-normal text-slate-500">(optional — required if reason is Other)</span></label><input id="exit-note" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              </div>
+              <p id="exit-form-error" class="mt-3 hidden text-sm text-red-700"></p>
+              <div class="mt-4 flex gap-2"><button id="exit-submit" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Submit</button><button id="exit-cancel" type="button" class="rounded-lg border bg-white px-4 py-2.5 text-sm font-bold">Cancel</button></div>
+            </form>
+          </section>
+        </section>
+      </section>
+
     </main>
   </div>
 </div>
@@ -322,7 +427,7 @@
 const $ = id => document.getElementById(id);
 const API_BASE_URL = ""; // same origin: the dashboard and the API are one service
 const state = { hotels: [], employees: [], attendance: [], roster: [], payroll: [], leaveTypes: [], leaveYearStart: 1,
-  leaves: null, unrecognised: [], selectedHotel: "all", backend: false, counts: { employees: null, attendance: null } };
+  leaves: null, unrecognised: [], increments: [], exitFormEmployee: null, selectedHotel: "all", backend: false, counts: { employees: null, attendance: null } };
 
 /* ---------- small helpers ---------- */
 let toastTimer;
@@ -456,37 +561,103 @@ async function addHotel(ev) {
 }
 
 /* ---------- employees ---------- */
+function employeeStatusFilter() { return $("employee-status-filter") ? $("employee-status-filter").value : "active"; }
+function filteredEmployeeRows() {
+  const rows = scopeEmployees(), mode = employeeStatusFilter();
+  if (mode === "active") return rows.filter(e => e.status !== "Exited");
+  if (mode === "exited") return rows.filter(e => e.status === "Exited");
+  return rows;
+}
 function renderEmployees() {
-  const rows = scopeEmployees(), empty = $("employee-empty"), wrap = $("employee-table-wrap");
+  const rows = filteredEmployeeRows(), empty = $("employee-empty"), wrap = $("employee-table-wrap");
   if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
   empty.classList.add("hidden"); wrap.classList.remove("hidden");
   $("employee-table").innerHTML = rows.map(r => {
     const bank = r.bank_name || r.bank_account_no ? `${esc(r.bank_name || "—")}<span class="block text-xs font-normal text-slate-500">${esc(r.bank_account_no || "")} ${esc(r.ifsc_code || "")}</span>` : "—";
     const pfEsi = `${r.pf_applicable ? "PF" : ""}${r.pf_applicable && r.esi_applicable ? " · " : ""}${r.esi_applicable ? "ESI" : ""}` || "—";
-    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${Number(r.fixed_basic_salary) ? Number(r.fixed_basic_salary).toLocaleString() : "—"}</td><td class="p-3">${pfEsi}</td><td class="p-3">${bank}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${esc(r.status || "—")}</td></tr>`;
+    const statusCell = r.status === "Exited"
+      ? `<span class="status-pill bg-red-50 text-red-700">Exited</span><span class="block text-[11px] text-slate-500">LWD ${esc(r.last_working_day || "—")}</span>`
+      : `<span class="status-pill bg-emerald-50 text-emerald-700">${esc(r.status || "Active")}</span>`;
+    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${Number(r.fixed_basic_salary) ? Number(r.fixed_basic_salary).toLocaleString() : "—"}</td><td class="p-3">${pfEsi}</td><td class="p-3">${bank}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${statusCell}</td><td class="p-3"><div class="flex gap-1.5"><button class="edit-employee rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Edit</button>${r.status !== "Exited" ? `<button class="exit-employee rounded border border-red-200 px-2 py-1 text-xs font-bold text-red-700" data-id="${esc(r.id)}">Exit</button>` : ""}</div></td></tr>`;
   }).join("");
+  document.querySelectorAll(".edit-employee").forEach(b => b.onclick = () => openEditEmployee(b.dataset.id));
+  document.querySelectorAll(".exit-employee").forEach(b => b.onclick = () => { switchTab("exit"); showExitSubview("exit-staff-view"); openExitForm(b.dataset.id); });
 }
 async function loadEmployees() { try { const data = await request("/api/employees"); state.employees = data.records || []; renderEmployees(); } catch (e) { toast(errorCopy(e, "Load employees")); } }
-function toggleAddEmployeeForm(open) { const f = $("add-employee-form"); f.classList.toggle("hidden", !open); if (!open) { f.reset(); $("new-emp-pf").checked = true; $("new-emp-esi").checked = true; $("add-employee-error").classList.add("hidden"); } }
+
+function toggleAddEmployeeForm(open) {
+  const f = $("add-employee-form"); f.classList.toggle("hidden", !open);
+  if (!open) {
+    f.reset(); $("new-emp-pf").checked = true; $("new-emp-esi").checked = true; $("add-employee-error").classList.add("hidden");
+    $("new-emp-editing-id").value = ""; $("new-emp-id").disabled = false;
+    $("new-emp-salary").dataset.original = ""; $("new-emp-increment-wrap").classList.add("hidden");
+    $("employee-form-title").textContent = "Add Employee"; $("employee-form-hint").classList.add("hidden");
+    $("submit-add-employee").textContent = "Save employee";
+  }
+}
+function openEditEmployee(id) {
+  const r = state.employees.find(e => e.id === id);
+  if (!r) return;
+  toggleAddEmployeeForm(true);
+  $("new-emp-editing-id").value = r.id; $("new-emp-id").value = r.id; $("new-emp-id").disabled = true; // code can't change once created
+  $("new-emp-name").value = r.name || ""; $("new-emp-hotel").value = r.hotel_id || ""; $("new-emp-role").value = r.role || "";
+  $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || "";
+  $("new-emp-salary").value = r.monthly_salary || 0; $("new-emp-salary").dataset.original = Number(r.monthly_salary) || 0;
+  $("new-emp-basic").value = r.fixed_basic_salary || 0; $("new-emp-pf").checked = !!r.pf_applicable; $("new-emp-esi").checked = !!r.esi_applicable;
+  $("new-emp-bank-name").value = r.bank_name || ""; $("new-emp-bank-account").value = r.bank_account_no || ""; $("new-emp-ifsc").value = r.ifsc_code || "";
+  $("employee-form-title").textContent = `Edit ${r.name}`; $("employee-form-hint").classList.remove("hidden");
+  $("submit-add-employee").textContent = "Save changes";
+  $("new-emp-salary").dispatchEvent(new Event("input"));
+}
 async function addEmployee(ev) {
   ev.preventDefault();
-  const id = $("new-emp-id").value.trim(), name = $("new-emp-name").value.trim(), cardNo = $("new-emp-card").value.trim();
+  const editingId = $("new-emp-editing-id").value;
+  const id = editingId || $("new-emp-id").value.trim();
+  const name = $("new-emp-name").value.trim(), cardNo = $("new-emp-card").value.trim();
   const acctNo = $("new-emp-bank-account").value.trim(), ifsc = $("new-emp-ifsc").value.trim();
   const err = $("add-employee-error"), btn = $("submit-add-employee");
   if (!id || !name) { err.textContent = "Employee Code and Name are required."; err.classList.remove("hidden"); return; }
   if (cardNo && !/^\d+$/.test(cardNo)) { err.textContent = "Card No / Device User ID must be numbers only — that's a limit of the biometric machine itself."; err.classList.remove("hidden"); return; }
   if (acctNo && !/^\d+$/.test(acctNo)) { err.textContent = "Bank Account No. must be numbers only."; err.classList.remove("hidden"); return; }
   if (ifsc && !/^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(ifsc)) { err.textContent = "IFSC Code doesn't look right — it should be 11 characters, e.g. SBIN0001234."; err.classList.remove("hidden"); return; }
+  const salary = Number($("new-emp-salary").value) || 0;
+  const original = $("new-emp-salary").dataset.original === "" ? null : Number($("new-emp-salary").dataset.original);
+  const increasing = editingId && original !== null && salary > original;
+  const incrementReason = $("new-emp-increment-reason").value;
+  if (increasing && !incrementReason) { err.textContent = "Please select a reason for the salary increase."; err.classList.remove("hidden"); return; }
   err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
+  const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(),
+    monthly_salary: salary, fixed_basic_salary: $("new-emp-basic").value || 0,
+    pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked,
+    date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim(),
+    bank_name: $("new-emp-bank-name").value.trim(), bank_account_no: acctNo, ifsc_code: ifsc };
+  if (increasing) { payload.increment_reason = incrementReason; payload.increment_note = $("new-emp-increment-note").value.trim(); }
   try {
-    await request("/api/employees", { method: "POST", body: { id, name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(),
-      monthly_salary: $("new-emp-salary").value || 0, fixed_basic_salary: $("new-emp-basic").value || 0,
-      pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked,
-      date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim(),
-      bank_name: $("new-emp-bank-name").value.trim(), bank_account_no: acctNo, ifsc_code: ifsc } });
-    toast(`Employee ${name} added.`); toggleAddEmployeeForm(false); await loadEmployees(); await loadHotels();
-  } catch (e) { err.textContent = e.message || errorCopy(e, "Add employee"); err.classList.remove("hidden"); }
-  finally { btn.disabled = false; btn.textContent = "Save employee"; }
+    if (editingId) await request(`/api/employees/${enc(editingId)}`, { method: "PATCH", body: payload });
+    else await request("/api/employees", { method: "POST", body: { id, ...payload } });
+    toast(editingId ? `${name}'s details saved.` : `Employee ${name} added.`);
+    toggleAddEmployeeForm(false); await loadEmployees(); await loadHotels(); await loadIncrements();
+  } catch (e) { err.textContent = e.message || errorCopy(e, "Save employee"); err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = editingId ? "Save changes" : "Save employee"; }
+}
+
+/* ---------- salary revisions (increment report) ---------- */
+async function loadIncrements() {
+  try { const d = await request("/api/increments"); state.increments = d.records || []; renderIncrements(); }
+  catch (e) { /* non-critical for other flows; surface only if the panel is actually visible */ if (activeTab() === "employees") toast(errorCopy(e, "Load salary revisions")); }
+}
+function renderIncrements() {
+  const rows = state.increments || [], empty = $("increments-empty"), wrap = $("increments-wrap");
+  if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  $("increments-table").innerHTML = rows.map(r => {
+    const change = Number(r.new_salary) - Number(r.old_salary), up = change > 0;
+    return `<tr class="border-t"><td class="p-3">${esc(r.changed_at)}</td><td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name || "")}</span></td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${Number(r.old_salary).toLocaleString()}</td><td class="p-3">${Number(r.new_salary).toLocaleString()}</td><td class="p-3 font-semibold ${up ? "text-emerald-700" : "text-red-700"}">${up ? "+" : ""}${change.toLocaleString()}</td><td class="p-3">${esc(r.reason || "—")}${r.note ? `<span class="block text-xs text-slate-500">${esc(r.note)}</span>` : ""}</td></tr>`;
+  }).join("");
+}
+function exportIncrements() {
+  downloadCsv((state.increments || []).map(r => ({ date: r.changed_at, employee_code: r.employee_id, employee_name: r.employee_name, hotel: hotelName(r.hotel_id),
+    old_salary: r.old_salary, new_salary: r.new_salary, change: Number(r.new_salary) - Number(r.old_salary), reason: r.reason, note: r.note })), "salary-revisions.csv");
 }
 async function deleteAllEmployees() {
   const count = state.employees.length;
@@ -826,7 +997,7 @@ function payrollRow(r) {
   return `<tr class="border-t">
     <td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></td>
     <td class="p-3 text-xs">${bank}</td>
-    <td class="p-3">${num("salary-input", r.monthly_salary)}</td>
+    <td class="p-3">${num("salary-input", r.monthly_salary, `data-original="${r.monthly_salary}"`)}</td>
     <td class="p-3">${num("basic-input", r.fixed_basic_salary)}</td>
     <td class="p-3">${r.present_days}</td><td class="p-3">${r.absent_days}</td><td class="p-3">${r.weekly_off_days}</td><td class="p-3">${r.comp_off_days}</td>
     <td class="p-3">${r.leave_days}${r.unpaid_leave_days ? `<span class="block text-[11px] text-slate-500">+${r.unpaid_leave_days} unpaid</span>` : ""}</td>
@@ -851,8 +1022,15 @@ function renderPayroll() {
   document.querySelectorAll(".salary-input").forEach(input => input.addEventListener("change", async () => {
     const value = Number(input.value);
     if (isNaN(value) || value < 0) { toast("Gross Salary must be a number, 0 or more."); return; }
-    try { await request(`/api/employees/${enc(input.dataset.employee)}/salary`, { method: "POST", body: { monthly_salary: value } }); toast("Gross Salary updated."); await loadPayroll(); await loadEmployees(); }
-    catch (e) { toast(errorCopy(e, "Update salary")); }
+    const original = Number(input.dataset.original || 0);
+    let increment_reason;
+    if (value > original) {
+      increment_reason = prompt("This raises the Gross Salary — please give a reason (e.g. Promotion, Annual Increment):");
+      if (increment_reason === null) { input.value = original; return; } // cancelled
+      if (!increment_reason.trim()) { toast("A reason is required to raise Gross Salary — change wasn't saved."); input.value = original; return; }
+    }
+    try { await request(`/api/employees/${enc(input.dataset.employee)}/salary`, { method: "POST", body: { monthly_salary: value, increment_reason } }); toast("Gross Salary updated."); await loadPayroll(); await loadEmployees(); await loadIncrements(); }
+    catch (e) { toast(errorCopy(e, "Update salary")); input.value = original; }
   }));
   document.querySelectorAll(".basic-input").forEach(input => input.addEventListener("change", async () => {
     const value = Number(input.value);
@@ -897,13 +1075,78 @@ async function clearUnrecognised() {
   catch (e) { toast(errorCopy(e, "Delete unrecognised punches")); }
 }
 
+/* ---------- exit ---------- */
+function showExitSubview(id) {
+  document.querySelectorAll(".exit-subview").forEach(v => v.classList.toggle("hidden", v.id !== id));
+  document.querySelectorAll(".exit-subview-btn").forEach(b => b.classList.toggle("active", b.dataset.subview === id));
+}
+function renderExitReport() {
+  const rows = state.employees.filter(e => e.status === "Exited").sort((a, b) => (b.last_working_day || "").localeCompare(a.last_working_day || ""));
+  const empty = $("exit-report-empty"), wrap = $("exit-report-wrap");
+  if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
+  empty.classList.add("hidden"); wrap.classList.remove("hidden");
+  $("exit-report-table").innerHTML = rows.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.last_working_day || "—")}</td><td class="p-3">${esc(r.exit_reason || "—")}${r.exit_note ? `<span class="block text-xs text-slate-500">${esc(r.exit_note)}</span>` : ""}</td><td class="p-3">${r.ffs_amount !== null && r.ffs_amount !== undefined && r.ffs_amount !== "" ? Number(r.ffs_amount).toLocaleString() : "—"}</td><td class="p-3">${statusPill(r.ffs_status || "Pending")}</td><td class="p-3"><button class="update-exit rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Update</button></td></tr>`).join("");
+  document.querySelectorAll(".update-exit").forEach(b => b.onclick = () => { showExitSubview("exit-staff-view"); openExitForm(b.dataset.id); });
+}
+function exportExitReport() {
+  downloadCsv(state.employees.filter(e => e.status === "Exited").map(r => ({ employee_code: r.id, employee_name: r.name, hotel: hotelName(r.hotel_id),
+    last_working_day: r.last_working_day, exit_reason: r.exit_reason, exit_note: r.exit_note, ffs_amount: r.ffs_amount, ffs_status: r.ffs_status })), "exit-report.csv");
+}
+function renderExitSearch(query) {
+  const q = query.trim().toLowerCase();
+  const results = q ? state.employees.filter(e => e.id.toLowerCase().includes(q) || (e.name || "").toLowerCase().includes(q)).slice(0, 20) : [];
+  $("exit-search-results").innerHTML = results.length ? results.map(e => `<button type="button" class="exit-search-result flex w-full items-center justify-between p-3 text-left text-sm hover:bg-slate-50" data-id="${esc(e.id)}"><span><span class="font-semibold">${esc(e.id)}</span> — ${esc(e.name)} <span class="text-slate-500">(${esc(hotelName(e.hotel_id))})</span></span>${e.status === "Exited" ? `<span class="status-pill bg-red-50 text-red-700">Exited</span>` : ""}</button>`).join("")
+    : (q ? `<p class="p-3 text-sm text-slate-500">No matches.</p>` : "");
+  document.querySelectorAll(".exit-search-result").forEach(b => b.onclick = () => openExitForm(b.dataset.id));
+}
+function openExitForm(id) {
+  const r = state.employees.find(e => e.id === id);
+  if (!r) return;
+  state.exitFormEmployee = r;
+  $("exit-form-panel").classList.remove("hidden");
+  $("exit-form-title").textContent = `Exit details — ${r.name} (${r.id})`;
+  $("exit-emp-id").value = r.id;
+  $("exit-lwd").value = r.last_working_day || "";
+  $("exit-reason").value = r.exit_reason && ["Resignation", "Termination", "Absconding", "Contract Completed", "Retirement"].includes(r.exit_reason) ? r.exit_reason : (r.exit_reason ? "Other" : "");
+  $("exit-note").value = r.exit_note || "";
+  $("exit-ffs-amount").value = r.ffs_amount !== null && r.ffs_amount !== undefined ? r.ffs_amount : "";
+  $("exit-ffs-status").value = r.ffs_status || "Pending";
+  $("exit-reactivate").classList.toggle("hidden", r.status !== "Exited");
+  $("exit-form-error").classList.add("hidden");
+  $("exit-form-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function closeExitForm() { $("exit-form-panel").classList.add("hidden"); state.exitFormEmployee = null; $("exit-form").reset(); }
+async function submitExit(ev) {
+  ev.preventDefault();
+  const id = $("exit-emp-id").value, lwd = $("exit-lwd").value, reason = $("exit-reason").value, note = $("exit-note").value.trim();
+  const err = $("exit-form-error"), btn = $("exit-submit");
+  if (!lwd) { err.textContent = "Last Working Day is required."; err.classList.remove("hidden"); return; }
+  if (!reason) { err.textContent = "Please select an exit reason."; err.classList.remove("hidden"); return; }
+  if (reason === "Other" && !note) { err.textContent = "Please add a note describing the reason."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    await request(`/api/employees/${enc(id)}/exit`, { method: "POST", body: { last_working_day: lwd, exit_reason: reason, exit_note: note,
+      ffs_amount: $("exit-ffs-amount").value === "" ? null : Number($("exit-ffs-amount").value), ffs_status: $("exit-ffs-status").value } });
+    toast(`Exit details saved for ${id}.`); closeExitForm(); await loadEmployees(); await loadHotels(); renderExitReport();
+  } catch (e) { err.textContent = e.message || errorCopy(e, "Save exit details"); err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Submit"; }
+}
+async function reactivateEmployee() {
+  const id = $("exit-emp-id").value;
+  if (!id) return;
+  if (!confirm(`Cancel ${id}'s exit and set them back to Active?`)) return;
+  try { await request(`/api/employees/${enc(id)}/reactivate`, { method: "POST" }); toast(`${id} is Active again.`); closeExitForm(); await loadEmployees(); renderExitReport(); }
+  catch (e) { toast(errorCopy(e, "Reactivate employee")); }
+}
+
 /* ---------- navigation ---------- */
 function activeTab() { const el = document.querySelector(".tab-view.active"); return el ? el.id : ""; }
 async function refreshActiveTab() {
   const tab = activeTab();
   if (tab === "hotel-network") renderHotelTable();
   else if (tab === "biometric") { renderBiometricTable(); await loadUnrecognised(); }
-  else if (tab === "employees") renderEmployees();
+  else if (tab === "employees") { renderEmployees(); await loadIncrements(); }
+  else if (tab === "exit") { renderExitReport(); renderExitSearch($("exit-search") ? $("exit-search").value : ""); }
   else if (tab === "attendance") await loadAttendance();
   else if (tab === "roster") await loadRoster();
   else if (tab === "leaves") { await loadLeavePolicy(); await loadLeaves(); }
@@ -937,6 +1180,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("refresh-employees").onclick = loadEmployees; $("delete-all-employees").onclick = deleteAllEmployees;
   $("import-employees").onclick = () => $("employees-file").click(); $("employees-file").onchange = e => { if (e.target.files[0]) importEmployees(e.target.files[0]); };
   $("download-employee-template").onclick = downloadEmployeeTemplate;
+  $("employee-status-filter").onchange = renderEmployees;
+  $("download-increments").onclick = exportIncrements;
+  $("new-emp-salary").addEventListener("input", () => {
+    const original = $("new-emp-salary").dataset.original;
+    const show = original !== "" && original !== undefined && Number($("new-emp-salary").value || 0) > Number(original);
+    $("new-emp-increment-wrap").classList.toggle("hidden", !show);
+  });
+
+  document.querySelectorAll(".exit-subview-btn").forEach(b => b.onclick = () => showExitSubview(b.dataset.subview));
+  $("exit-search").oninput = e => renderExitSearch(e.target.value);
+  $("exit-form").onsubmit = submitExit;
+  $("exit-cancel").onclick = closeExitForm;
+  $("exit-reactivate").onclick = reactivateEmployee;
+  $("download-exits").onclick = exportExitReport;
 
   $("download-attendance").onclick = exportAttendance;
   $("download-attendance-template").onclick = downloadAttendanceTemplate;
