@@ -1720,7 +1720,15 @@ app.post("/api/self/login", async (req, res) => {
     const id = req.body && req.body.employee_id ? String(req.body.employee_id).trim() : "";
     const password = req.body && req.body.password ? String(req.body.password) : "";
     if (!id || !password) return res.status(400).json({ status: "error", message: "Employee ID and password are required." });
-    const r = await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees WHERE id = $1`, [id]);
+    // A deliberately separate, narrower query from EMPLOYEE_COLS: this is
+    // the one place that needs password_hash/password_salt/must_reset_password,
+    // and EMPLOYEE_COLS must never include them — it's reused to build the
+    // JSON the admin dashboard's Employees tab receives, so adding auth
+    // secrets there would leak every password hash to the browser.
+    const r = await pool.query(
+      "SELECT id, name, hotel_id, role, status, must_reset_password, password_hash, password_salt FROM employees WHERE id = $1",
+      [id]
+    );
     if (!r.rows.length) return res.status(401).json({ status: "error", message: "Employee ID or password is incorrect." });
     const emp = r.rows[0];
     if (emp.status === "Exited") return res.status(403).json({ status: "error", message: "This account is no longer active." });
