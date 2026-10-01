@@ -210,7 +210,10 @@
               <div><label class="mb-1 block text-sm font-semibold">Hotel</label><select id="new-emp-hotel" class="w-full rounded-lg border p-2.5 text-sm"><option value="">Select hotel</option></select></div>
               <div><label class="mb-1 block text-sm font-semibold">Designation</label><input id="new-emp-role" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Department</label><input id="new-emp-department" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. Housekeeping"></div>
+<<<<<<< HEAD
               <div><label class="mb-1 block text-sm font-semibold">Emergency Contact No.</label><input id="new-emp-emergency-contact" inputmode="tel" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. 98765 43210"></div>
+=======
+>>>>>>> cc8c6fb4fea1b5897e2d62cb2f9d94ccf6010090
               <div><label class="mb-1 block text-sm font-semibold">Date of Joining</label><input id="new-emp-doj" type="date" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Card No / Device User ID <span class="font-normal text-slate-500">(numbers only — the biometric machine's own ID)</span></label><input id="new-emp-card" inputmode="numeric" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Property Identifier <span class="font-normal text-slate-500">(optional label, e.g. VCOR001)</span></label><input id="new-emp-property-code" class="w-full rounded-lg border p-2.5 text-sm"></div>
@@ -749,7 +752,16 @@ function renderEmployees() {
   if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
   empty.classList.add("hidden"); wrap.classList.remove("hidden");
   $("employee-table").innerHTML = rows.map(r => {
+<<<<<<< HEAD
     return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}${r.status === "Exited" ? `<span class="status-pill mt-1 inline-block bg-red-50 text-red-700">Exited</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}${r.department ? `<span class="block text-xs font-normal text-slate-500">${esc(r.department)}</span>` : ""}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${esc(r.emergency_contact || "—")}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${esc(r.last_increment_date || "—")}</td><td class="p-3"><div class="flex flex-wrap gap-1.5"><button class="edit-employee rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Edit</button>${r.status !== "Exited" ? `<button class="exit-employee rounded border border-red-200 px-2 py-1 text-xs font-bold text-red-700" data-id="${esc(r.id)}">Exit</button>` : ""}<button class="reset-password rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}" data-name="${esc(r.name)}" title="Reset their portal password to the shared first-login password">Reset Password</button></div></td></tr>`;
+=======
+    const bank = r.bank_name || r.bank_account_no ? `${esc(r.bank_name || "—")}<span class="block text-xs font-normal text-slate-500">${esc(r.bank_account_no || "")} ${esc(r.ifsc_code || "")}</span>` : "—";
+    const pfEsi = `${r.pf_applicable ? "PF" : ""}${r.pf_applicable && r.esi_applicable ? " · " : ""}${r.esi_applicable ? "ESI" : ""}` || "—";
+    const statusCell = r.status === "Exited"
+      ? `<span class="status-pill bg-red-50 text-red-700">Exited</span><span class="block text-[11px] text-slate-500">LWD ${esc(r.last_working_day || "—")}</span>`
+      : `<span class="status-pill bg-emerald-50 text-emerald-700">${esc(r.status || "Active")}</span>`;
+    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}${r.department ? `<span class="block text-xs font-normal text-slate-500">${esc(r.department)}</span>` : ""}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${Number(r.fixed_basic_salary) ? Number(r.fixed_basic_salary).toLocaleString() : "—"}</td><td class="p-3">${pfEsi}</td><td class="p-3">${bank}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${statusCell}</td><td class="p-3"><div class="flex flex-wrap gap-1.5"><button class="edit-employee rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Edit</button>${r.status !== "Exited" ? `<button class="exit-employee rounded border border-red-200 px-2 py-1 text-xs font-bold text-red-700" data-id="${esc(r.id)}">Exit</button>` : ""}<button class="reset-password rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}" data-name="${esc(r.name)}" title="Reset their portal password to the shared first-login password">Reset Password</button></div></td></tr>`;
+>>>>>>> cc8c6fb4fea1b5897e2d62cb2f9d94ccf6010090
   }).join("");
   document.querySelectorAll(".edit-employee").forEach(b => b.onclick = () => openEditEmployee(b.dataset.id));
   document.querySelectorAll(".exit-employee").forEach(b => b.onclick = () => { switchTab("exit"); showExitSubview("exit-staff-view"); openExitForm(b.dataset.id); });
@@ -773,7 +785,11 @@ function openEditEmployee(id) {
   toggleAddEmployeeForm(true);
   $("new-emp-editing-id").value = r.id; $("new-emp-id").value = r.id; $("new-emp-id").disabled = true; // code can't change once created
   $("new-emp-name").value = r.name || ""; $("new-emp-hotel").value = r.hotel_id || ""; $("new-emp-role").value = r.role || "";
+<<<<<<< HEAD
   $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || ""; $("new-emp-department").value = r.department || ""; $("new-emp-emergency-contact").value = r.emergency_contact || "";
+=======
+  $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || ""; $("new-emp-department").value = r.department || "";
+>>>>>>> cc8c6fb4fea1b5897e2d62cb2f9d94ccf6010090
   $("new-emp-salary").value = r.monthly_salary || 0; $("new-emp-salary").dataset.original = Number(r.monthly_salary) || 0;
   $("new-emp-basic").value = r.fixed_basic_salary || 0; $("new-emp-pf").checked = !!r.pf_applicable; $("new-emp-esi").checked = !!r.esi_applicable;
   $("new-emp-bank-name").value = r.bank_name || ""; $("new-emp-bank-account").value = r.bank_account_no || ""; $("new-emp-ifsc").value = r.ifsc_code || "";
@@ -798,7 +814,11 @@ async function addEmployee(ev) {
   const incrementReason = $("new-emp-increment-reason").value;
   if (increasing && !incrementReason) { err.textContent = "Please select a reason for the salary increase."; err.classList.remove("hidden"); return; }
   err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
+<<<<<<< HEAD
   const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(), department: $("new-emp-department").value.trim(), emergency_contact: $("new-emp-emergency-contact").value.trim(),
+=======
+  const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(), department: $("new-emp-department").value.trim(),
+>>>>>>> cc8c6fb4fea1b5897e2d62cb2f9d94ccf6010090
     monthly_salary: salary, fixed_basic_salary: $("new-emp-basic").value || 0,
     pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked,
     date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim(),
@@ -841,7 +861,11 @@ async function deleteAllEmployees() {
 }
 function downloadEmployeeTemplate() {
   downloadCsv([{ EmpName: "Asha Rao", Cardno: "00000123", EmpCode: "VCOR045", Desig_Name: "Front Desk Executive", Dept_Name: "Front Office", Branch: "Hotel Alpine Abode Continental",
+<<<<<<< HEAD
     "Date of Joining": "2026-01-15", "Property ID": "VCOR045", "Emergency Contact": "9876543210",
+=======
+    "Date of Joining": "2026-01-15", "Property ID": "VCOR045",
+>>>>>>> cc8c6fb4fea1b5897e2d62cb2f9d94ccf6010090
     "Gross Salary": "12000", "Fixed Basic Salary": "10558", "PF Applicable": "Yes", "ESI Applicable": "Yes",
     "Bank Name": "State Bank of India", "Bank Account No.": "000000000000", "IFSC Code": "SBIN0001234" }], "employee-import-template.csv");
 }
@@ -851,7 +875,11 @@ async function importEmployees(file) {
     const c = {
       id: findCol(fields, ["empcode", "employeecode", "employeeid", "empid", "id"]), name: findCol(fields, NAME_ALIASES),
       card: findCol(fields, ["cardno", "cardnumber", "deviceuserid", "machineuserid", "userid"]),
+<<<<<<< HEAD
       role: findCol(fields, ["designame", "designation", "role", "position"]), department: findCol(fields, ["deptname", "department", "dept"]), emergencyContact: findCol(fields, ["emergencycontact", "emergencycontactno", "emergencynumber"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
+=======
+      role: findCol(fields, ["designame", "designation", "role", "position"]), department: findCol(fields, ["deptname", "department", "dept"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
+>>>>>>> cc8c6fb4fea1b5897e2d62cb2f9d94ccf6010090
       salary: findCol(fields, ["grosssalary", "monthlysalary", "salary"]), basic: findCol(fields, ["fixedbasicsalary", "basicsalary", "basic"]),
       pf: findCol(fields, ["pfapplicable", "pf"]), esi: findCol(fields, ["esiapplicable", "esi"]),
       doj: findCol(fields, ["dateofjoining", "doj", "joiningdate"]), prop: findCol(fields, ["propertyid", "propertycode"]),
@@ -861,7 +889,11 @@ async function importEmployees(file) {
     const rows = data.filter(r => r[c.id]).map(r => ({
       employee_id: r[c.id], name: r[c.name],
       machine_user_id: c.card && /^\d+$/.test(r[c.card] || "") ? r[c.card] : "",
+<<<<<<< HEAD
       role: c.role ? r[c.role] : "", department: c.department ? r[c.department] : "", emergency_contact: c.emergencyContact ? r[c.emergencyContact] : "", hotel_id: c.hotel ? r[c.hotel] : "",
+=======
+      role: c.role ? r[c.role] : "", department: c.department ? r[c.department] : "", hotel_id: c.hotel ? r[c.hotel] : "",
+>>>>>>> cc8c6fb4fea1b5897e2d62cb2f9d94ccf6010090
       monthly_salary: c.salary ? r[c.salary].replace(/,/g, "") : undefined, date_of_joining: c.doj ? headerToIsoDate(r[c.doj], new Date().getFullYear()) || r[c.doj] : undefined,
       property_code: c.prop ? r[c.prop] : undefined,
       fixed_basic_salary: c.basic ? r[c.basic].replace(/,/g, "") : undefined,
