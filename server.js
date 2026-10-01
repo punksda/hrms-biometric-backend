@@ -30,6 +30,14 @@ app.use(express.static(path.join(__dirname, "public")));
 // Clean URL for the employee self-service portal — same server, separate page.
 app.get("/employee", (req, res) => res.sendFile(path.join(__dirname, "public", "employee.html")));
 
+// Gates every /api/* route below with a valid admin login, except the
+// employee self-service routes (their own separate login), the biometric
+// webhook (a physical device can't log in), and the admin login route
+// itself. Defined further down (with the rest of the auth code) but
+// referenced here — safe, since function declarations are available
+// throughout the file regardless of where they're written.
+app.use(requireAdminAuth);
+
 // ---------------------------------------------------------------------
 // Schema + one-time seed. Runs on every startup; all statements are
 // idempotent (CREATE TABLE IF NOT EXISTS, INSERT ... ON CONFLICT DO
@@ -80,6 +88,8 @@ async function initDb() {
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS fixed_basic_salary NUMERIC DEFAULT 0;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS pf_applicable BOOLEAN DEFAULT true;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS esi_applicable BOOLEAN DEFAULT true;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_contact TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ifsc_code TEXT DEFAULT '';`);
@@ -496,7 +506,7 @@ function ptForSlab(grossP, slabs) {
 const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent", "half day", "on duty"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
   to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
-  fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
+  department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
   to_char(last_working_day, 'YYYY-MM-DD') AS last_working_day, exit_reason, exit_note, ffs_amount, ffs_status`;
 
 async function getPayrollRates() {
@@ -641,7 +651,7 @@ async function computePayroll(hotelId, month) {
     const netPay = fnfAmount !== null ? fnfAmount : (onHold ? 0 : netBeforeHold);
     return {
       employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id,
-      designation: emp.role, bank_name: emp.bank_name || "", bank_account_no: emp.bank_account_no || "", ifsc_code: emp.ifsc_code || "",
+      designation: emp.role, department: emp.department || "", bank_name: emp.bank_name || "", bank_account_no: emp.bank_account_no || "", ifsc_code: emp.ifsc_code || "",
       monthly_salary: monthlySalary, fixed_basic_salary: Number(emp.fixed_basic_salary) || 0, days_in_month: dim,
       present_days: t.present, absent_days: t.absent, weekly_off_days: t.weekly_off,
       comp_off_days: t.comp_off, half_days: t.half_day, on_duty_days: t.on_duty, leave_days: t.leave, unpaid_leave_days: t.unpaid_leave,
@@ -1055,7 +1065,11 @@ app.post("/api/attendance/daily-summary/import", async (req, res) => {
 // ---------------------------------------------------------------------
 app.get("/api/employees", async (req, res) => {
   try {
-    const r = await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees ORDER BY id`);
+    const r = await pool.query(
+      `SELECT ${EMPLOYEE_COLS},
+         (SELECT to_char(MAX(changed_at), 'YYYY-MM-DD') FROM salary_increments si WHERE si.employee_id = employees.id) AS last_increment_date
+       FROM employees ORDER BY id`
+    );
     res.json({ status: "success", records: r.rows });
   } catch (error) {
     console.error("GET /api/employees failed:", error);
@@ -1087,11 +1101,13 @@ app.post("/api/employees", async (req, res) => {
     const doj = ymd(body.date_of_joining);
     const r = await pool.query(
       `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
-         fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
-       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+         department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
+       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
       [id, name, body.hotel_id ? String(body.hotel_id).trim() : "", body.role ? String(body.role).trim() : "",
        body.machine_user_id ? String(body.machine_user_id).trim() : "", salary, doj,
        body.property_code ? String(body.property_code).trim() : "",
+       body.department ? String(body.department).trim() : "",
+       body.emergency_contact ? String(body.emergency_contact).trim() : "",
        basicSalary, pfApplicable, esiApplicable,
        body.bank_name ? String(body.bank_name).trim() : "", body.bank_account_no ? String(body.bank_account_no).trim() : "",
        body.ifsc_code ? String(body.ifsc_code).trim().toUpperCase() : ""]
@@ -1137,8 +1153,8 @@ app.patch("/api/employees/:id", async (req, res) => {
     const ffsAmount = body.ffs_amount !== undefined ? (body.ffs_amount === null || body.ffs_amount === "" ? null : Number(body.ffs_amount)) : current.ffs_amount;
     const r = await pool.query(
       `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9,
-         fixed_basic_salary=$10, pf_applicable=$11, esi_applicable=$12, bank_name=$13, bank_account_no=$14, ifsc_code=$15,
-         last_working_day=$16, exit_reason=$17, exit_note=$18, ffs_amount=$19, ffs_status=$20
+         department=$10, emergency_contact=$11, fixed_basic_salary=$12, pf_applicable=$13, esi_applicable=$14, bank_name=$15, bank_account_no=$16, ifsc_code=$17,
+         last_working_day=$18, exit_reason=$19, exit_note=$20, ffs_amount=$21, ffs_status=$22
        WHERE id=$1 RETURNING *`,
       [
         req.params.id,
@@ -1149,6 +1165,8 @@ app.patch("/api/employees/:id", async (req, res) => {
         salary, doj,
         body.status !== undefined ? String(body.status).trim() : current.status,
         body.property_code !== undefined ? String(body.property_code).trim() : current.property_code,
+        body.department !== undefined ? String(body.department).trim() : current.department,
+        body.emergency_contact !== undefined ? String(body.emergency_contact).trim() : current.emergency_contact,
         basicSalary, pfApplicable, esiApplicable,
         body.bank_name !== undefined ? String(body.bank_name).trim() : current.bank_name,
         body.bank_account_no !== undefined ? String(body.bank_account_no).trim() : current.bank_account_no,
@@ -1301,24 +1319,26 @@ app.post("/api/employees/import", async (req, res) => {
              monthly_salary = COALESCE($7, monthly_salary),
              date_of_joining = COALESCE($8, date_of_joining),
              property_code = COALESCE(NULLIF($9, ''), property_code),
-             fixed_basic_salary = COALESCE($10, fixed_basic_salary),
-             pf_applicable = COALESCE($11, pf_applicable),
-             esi_applicable = COALESCE($12, esi_applicable),
-             bank_name = COALESCE(NULLIF($13, ''), bank_name),
-             bank_account_no = COALESCE(NULLIF($14, ''), bank_account_no),
-             ifsc_code = COALESCE(NULLIF($15, ''), ifsc_code)
+             department = COALESCE(NULLIF($10, ''), department),
+             emergency_contact = COALESCE(NULLIF($11, ''), emergency_contact),
+             fixed_basic_salary = COALESCE($12, fixed_basic_salary),
+             pf_applicable = COALESCE($13, pf_applicable),
+             esi_applicable = COALESCE($14, esi_applicable),
+             bank_name = COALESCE(NULLIF($15, ''), bank_name),
+             bank_account_no = COALESCE(NULLIF($16, ''), bank_account_no),
+             ifsc_code = COALESCE(NULLIF($17, ''), ifsc_code)
            WHERE id = $1`,
           [employee_id, row.name || "", row.machine_user_id || "", resolvedHotelId, row.role || "", row.status || "", salary, doj, row.property_code || "",
-           basicSalary, pfApplicable, esiApplicable, row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
+           row.department || "", row.emergency_contact || "", basicSalary, pfApplicable, esiApplicable, row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
         );
         updated++;
       } else {
         await pool.query(
           `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
-             fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+             department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [employee_id, row.name || "", resolvedHotelId, row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || "",
-           basicSalary || 0, pfApplicable === null ? true : pfApplicable, esiApplicable === null ? true : esiApplicable,
+           row.department || "", row.emergency_contact || "", basicSalary || 0, pfApplicable === null ? true : pfApplicable, esiApplicable === null ? true : esiApplicable,
            row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
         );
         created++;
@@ -1710,6 +1730,84 @@ async function requireEmployeeAuth(req, res, next) {
   next();
 }
 
+// ---------------------------------------------------------------------
+// Employer/admin login. Protects the whole dashboard — everyone's
+// attendance, payroll, salaries and bank details are visible there, so
+// unlike the employee portal (scoped to one person's own data) this needs
+// to be locked down before ANY data leaves the server.
+//
+// Same shared-password-then-forced-reset pattern as the employee portal,
+// deliberately: it's already tested, and there's normally just one or two
+// people administering this. The admin token is signed with role: "admin"
+// so it's never mistaken for (or interchangeable with) an employee token,
+// even though both use the same signing secret.
+//
+// The shared first-login password is the ADMIN_PASSWORD environment
+// variable on Render (Environment tab, same place as DATABASE_URL) if
+// set, or a fallback if it isn't — set that env var for real security
+// rather than relying on the fallback.
+// ---------------------------------------------------------------------
+async function requireAdminAuth(req, res, next) {
+  if (!req.path.startsWith("/api/")) return next();           // static files, not an API call
+  if (req.path.startsWith("/api/self/")) return next();        // employee's own auth space
+  if (req.path === "/api/biometric/attendance") return next(); // physical devices push here
+  if (req.path === "/api/admin/login") return next();          // the login call itself
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const payload = verifyToken(token);
+  if (!payload || payload.role !== "admin") {
+    return res.status(401).json({ status: "error", message: "Please log in again." });
+  }
+  next();
+}
+
+app.post("/api/admin/login", async (req, res) => {
+  try {
+    const password = req.body && req.body.password ? String(req.body.password) : "";
+    if (!password) return res.status(400).json({ status: "error", message: "Password is required." });
+    const storedHash = await getSetting("admin_password_hash", "");
+    const storedSalt = await getSetting("admin_password_salt", "");
+    let ok, mustReset;
+    if (storedHash && storedSalt) {
+      ok = verifyPassword(password, storedHash, storedSalt);
+      mustReset = false;
+    } else {
+      const sharedPassword = process.env.ADMIN_PASSWORD || "VoyageAdmin@2026";
+      ok = password === sharedPassword;
+      mustReset = true;
+    }
+    if (!ok) return res.status(401).json({ status: "error", message: "Incorrect password." });
+    const token = signToken({ role: "admin" });
+    res.json({ status: "success", token, must_reset_password: mustReset });
+  } catch (error) {
+    console.error("POST /api/admin/login failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Sets a new admin password, replacing the shared first-login one. Called
+// immediately after first login (forced by the dashboard before anything
+// else is usable), and available any time after as "change password."
+// Requires a valid admin token — including the must_reset one issued for
+// the shared password — so this can't be called without logging in first.
+app.post("/api/admin/set-password", async (req, res) => {
+  try {
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const payload = verifyToken(token);
+    if (!payload || payload.role !== "admin") return res.status(401).json({ status: "error", message: "Please log in again." });
+    const pw = req.body && req.body.new_password ? String(req.body.new_password) : "";
+    if (pw.length < 6) return res.status(400).json({ status: "error", message: "Password must be at least 6 characters." });
+    const { hash, salt } = hashPassword(pw);
+    await setSetting("admin_password_hash", hash);
+    await setSetting("admin_password_salt", salt);
+    res.json({ status: "success" });
+  } catch (error) {
+    console.error("POST /api/admin/set-password failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
 // Employee ID is the username. On someone's very first login there's no
 // password_hash yet, so the shared "first login" password (set by HR,
 // stored in settings) is accepted instead — but the response always says
@@ -1769,7 +1867,7 @@ app.post("/api/self/set-password", requireEmployeeAuth, async (req, res) => {
 app.get("/api/self/me", requireEmployeeAuth, async (req, res) => {
   const emp = req.employee;
   const hotel = (await pool.query("SELECT name FROM hotels WHERE id = $1", [emp.hotel_id])).rows[0];
-  res.json({ status: "success", employee: { id: emp.id, name: emp.name, role: emp.role, hotel_id: emp.hotel_id,
+  res.json({ status: "success", employee: { id: emp.id, name: emp.name, role: emp.role, department: emp.department || "", hotel_id: emp.hotel_id,
     hotel_name: hotel ? hotel.name : "", date_of_joining: emp.date_of_joining } });
 });
 
@@ -1799,13 +1897,33 @@ app.get("/api/self/leaves", requireEmployeeAuth, async (req, res) => {
   }
 });
 
-// Query param: month ("YYYY-MM"). Same figures the Payroll tab computes.
+// A payslip for month "2026-09" releases on 2026-10-06 — the 6th of the
+// month AFTER the one it covers. Works uniformly for any month, including
+// the current or a future one: their release date is always still ahead,
+// so there's no separate "is this month even over yet" check needed.
+function payslipReleaseDate(month) {
+  const [y, m] = month.split("-").map(Number);
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  return `${ny}-${pad2(nm)}-06`;
+}
+
+// Query param: month ("YYYY-MM"). Same figures the Payroll tab computes,
+// but only released from the 6th of the following month — before that,
+// payroll may still be mid-processing (late attendance fixes, adjustments),
+// so showing a number early risks showing one that still changes.
 app.get("/api/self/payslip", requireEmployeeAuth, async (req, res) => {
   try {
     const month = req.query.month || todayIst().slice(0, 7);
+    const releaseDate = payslipReleaseDate(month);
+    if (todayIst() < releaseDate) {
+      return res.status(403).json({
+        status: "error", message: `Payroll for this month hasn't been processed yet. Payslips are released on the 6th of the following month (available from ${releaseDate}).`,
+        not_yet_released: true, available_from: releaseDate
+      });
+    }
     const all = await computePayroll(req.employee.hotel_id, month);
     const mine = all.find(r => r.employee_id === req.employee.id);
-    if (!mine) return res.status(404).json({ status: "error", message: "No payroll data for that month yet." });
+    if (!mine) return res.status(404).json({ status: "error", message: "No payroll data for that month." });
     res.json({ status: "success", month, payslip: mine });
   } catch (error) {
     console.error("GET /api/self/payslip failed:", error);
