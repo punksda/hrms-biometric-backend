@@ -30,6 +30,14 @@ app.use(express.static(path.join(__dirname, "public")));
 // Clean URL for the employee self-service portal — same server, separate page.
 app.get("/employee", (req, res) => res.sendFile(path.join(__dirname, "public", "employee.html")));
 
+// Gates every /api/* route below with a valid admin login, except the
+// employee self-service routes (their own separate login), the biometric
+// webhook (a physical device can't log in), and the admin login route
+// itself. Defined further down (with the rest of the auth code) but
+// referenced here — safe, since function declarations are available
+// throughout the file regardless of where they're written.
+app.use(requireAdminAuth);
+
 // ---------------------------------------------------------------------
 // Schema + one-time seed. Runs on every startup; all statements are
 // idempotent (CREATE TABLE IF NOT EXISTS, INSERT ... ON CONFLICT DO
@@ -1709,6 +1717,84 @@ async function requireEmployeeAuth(req, res, next) {
   req.employee = r.rows[0];
   next();
 }
+
+// ---------------------------------------------------------------------
+// Employer/admin login. Protects the whole dashboard — everyone's
+// attendance, payroll, salaries and bank details are visible there, so
+// unlike the employee portal (scoped to one person's own data) this needs
+// to be locked down before ANY data leaves the server.
+//
+// Same shared-password-then-forced-reset pattern as the employee portal,
+// deliberately: it's already tested, and there's normally just one or two
+// people administering this. The admin token is signed with role: "admin"
+// so it's never mistaken for (or interchangeable with) an employee token,
+// even though both use the same signing secret.
+//
+// The shared first-login password is the ADMIN_PASSWORD environment
+// variable on Render (Environment tab, same place as DATABASE_URL) if
+// set, or a fallback if it isn't — set that env var for real security
+// rather than relying on the fallback.
+// ---------------------------------------------------------------------
+async function requireAdminAuth(req, res, next) {
+  if (!req.path.startsWith("/api/")) return next();           // static files, not an API call
+  if (req.path.startsWith("/api/self/")) return next();        // employee's own auth space
+  if (req.path === "/api/biometric/attendance") return next(); // physical devices push here
+  if (req.path === "/api/admin/login") return next();          // the login call itself
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const payload = verifyToken(token);
+  if (!payload || payload.role !== "admin") {
+    return res.status(401).json({ status: "error", message: "Please log in again." });
+  }
+  next();
+}
+
+app.post("/api/admin/login", async (req, res) => {
+  try {
+    const password = req.body && req.body.password ? String(req.body.password) : "";
+    if (!password) return res.status(400).json({ status: "error", message: "Password is required." });
+    const storedHash = await getSetting("admin_password_hash", "");
+    const storedSalt = await getSetting("admin_password_salt", "");
+    let ok, mustReset;
+    if (storedHash && storedSalt) {
+      ok = verifyPassword(password, storedHash, storedSalt);
+      mustReset = false;
+    } else {
+      const sharedPassword = process.env.ADMIN_PASSWORD || "VoyageAdmin@2026";
+      ok = password === sharedPassword;
+      mustReset = true;
+    }
+    if (!ok) return res.status(401).json({ status: "error", message: "Incorrect password." });
+    const token = signToken({ role: "admin" });
+    res.json({ status: "success", token, must_reset_password: mustReset });
+  } catch (error) {
+    console.error("POST /api/admin/login failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Sets a new admin password, replacing the shared first-login one. Called
+// immediately after first login (forced by the dashboard before anything
+// else is usable), and available any time after as "change password."
+// Requires a valid admin token — including the must_reset one issued for
+// the shared password — so this can't be called without logging in first.
+app.post("/api/admin/set-password", async (req, res) => {
+  try {
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const payload = verifyToken(token);
+    if (!payload || payload.role !== "admin") return res.status(401).json({ status: "error", message: "Please log in again." });
+    const pw = req.body && req.body.new_password ? String(req.body.new_password) : "";
+    if (pw.length < 6) return res.status(400).json({ status: "error", message: "Password must be at least 6 characters." });
+    const { hash, salt } = hashPassword(pw);
+    await setSetting("admin_password_hash", hash);
+    await setSetting("admin_password_salt", salt);
+    res.json({ status: "success" });
+  } catch (error) {
+    console.error("POST /api/admin/set-password failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
 
 // Employee ID is the username. On someone's very first login there's no
 // password_hash yet, so the shared "first login" password (set by HR,

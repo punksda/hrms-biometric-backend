@@ -26,6 +26,56 @@
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 </head>
 <body>
+
+<!-- ADMIN LOGIN GATE — covers the whole dashboard until a valid admin
+     login is on file. The dashboard behind it never receives real data
+     while this is showing: every API call requires the admin token this
+     screen produces, so there's nothing to see even if someone bypassed
+     this overlay directly. -->
+<div id="admin-gate" class="fixed inset-0 z-[100] hidden items-center justify-center bg-slate-950/70 px-4">
+  <div class="w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl">
+    <div class="mb-5 flex items-center gap-3">
+      <div class="grid h-10 w-10 place-items-center rounded-xl bg-indigo-500 text-white"><i data-lucide="compass" class="h-5 w-5"></i></div>
+      <div><div class="text-lg font-bold text-slate-900">Voyage HRMS</div><div class="text-xs text-slate-500">Employer sign-in</div></div>
+    </div>
+
+    <form id="admin-login-form">
+      <label class="mb-1 block text-sm font-semibold">Password</label>
+      <input id="admin-login-password" type="password" class="w-full rounded-lg border p-2.5 text-sm" autocomplete="current-password">
+      <p id="admin-login-error" class="mt-3 hidden text-sm font-semibold text-red-700"></p>
+      <button id="admin-login-submit" type="submit" class="mt-4 w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Log in</button>
+    </form>
+
+    <form id="admin-reset-form" class="hidden">
+      <p class="mb-3 text-sm text-slate-600">First login — set a password only you know before continuing.</p>
+      <label class="mb-1 block text-sm font-semibold">New password</label>
+      <input id="admin-reset-password" type="password" class="w-full rounded-lg border p-2.5 text-sm" autocomplete="new-password" placeholder="At least 6 characters">
+      <label class="mb-1 mt-3 block text-sm font-semibold">Confirm</label>
+      <input id="admin-reset-confirm" type="password" class="w-full rounded-lg border p-2.5 text-sm" autocomplete="new-password">
+      <p id="admin-reset-error" class="mt-3 hidden text-sm font-semibold text-red-700"></p>
+      <button id="admin-reset-submit" type="submit" class="mt-4 w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Save and continue</button>
+    </form>
+  </div>
+</div>
+
+<!-- CHANGE PASSWORD (available any time after logging in, via the sidebar) -->
+<div id="admin-change-password-overlay" class="fixed inset-0 z-[90] hidden items-center justify-center bg-slate-950/50 px-4">
+  <div class="w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl">
+    <h3 class="text-lg font-bold text-slate-900">Change password</h3>
+    <form id="admin-change-password-form" class="mt-3">
+      <label class="mb-1 block text-sm font-semibold">New password</label>
+      <input id="admin-cp-new" type="password" class="w-full rounded-lg border p-2.5 text-sm" autocomplete="new-password" placeholder="At least 6 characters">
+      <label class="mb-1 mt-3 block text-sm font-semibold">Confirm</label>
+      <input id="admin-cp-confirm" type="password" class="w-full rounded-lg border p-2.5 text-sm" autocomplete="new-password">
+      <p id="admin-cp-error" class="mt-3 hidden text-sm font-semibold text-red-700"></p>
+      <div class="mt-4 flex gap-2">
+        <button type="submit" class="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Save</button>
+        <button id="admin-cp-cancel" type="button" class="rounded-lg border px-4 py-2.5 text-sm font-bold">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="flex">
   <aside class="side-nav fixed inset-y-0 left-0 z-30 hidden md:flex flex-col p-4 text-slate-300">
     <div class="px-3 pt-3 pb-7 flex items-center gap-3">
@@ -46,6 +96,10 @@
     </nav>
     <div class="mt-auto rounded-xl border border-white/10 bg-white/5 p-3 text-xs">
       <span id="side-dot" class="mr-2 inline-block h-2 w-2 rounded-full bg-amber-400"></span><span id="side-status">Checking backend connection</span>
+      <div class="mt-2 flex gap-3 border-t border-white/10 pt-2">
+        <button id="open-change-admin-password" class="font-semibold text-indigo-200 hover:text-white">Change password</button>
+        <button id="admin-logout" class="font-semibold text-indigo-200 hover:text-white">Log out</button>
+      </div>
     </div>
   </aside>
   <div class="main-area w-full md:ml-[258px]">
@@ -479,7 +533,8 @@
 const $ = id => document.getElementById(id);
 const API_BASE_URL = ""; // same origin: the dashboard and the API are one service
 const state = { hotels: [], employees: [], attendance: [], roster: [], payroll: [], leaveTypes: [], leaveYearStart: 1,
-  leaves: null, unrecognised: [], increments: [], exitFormEmployee: null, selectedHotel: "all", backend: false, counts: { employees: null, attendance: null } };
+  leaves: null, unrecognised: [], increments: [], exitFormEmployee: null, selectedHotel: "all", backend: false, counts: { employees: null, attendance: null },
+  adminToken: localStorage.getItem("voyage_admin_token") || "" };
 
 /* ---------- small helpers ---------- */
 let toastTimer;
@@ -503,13 +558,75 @@ function setBackend(ok) {
 async function request(path, options = {}) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), options.timeout || 90000);
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (state.adminToken) headers.Authorization = `Bearer ${state.adminToken}`;
     const response = await fetch(`${API_BASE_URL}${path}`, {
-      method: options.method || "GET", headers: { "Content-Type": "application/json" },
+      method: options.method || "GET", headers,
       body: options.body ? JSON.stringify(options.body) : undefined, signal: controller.signal });
     const data = (response.headers.get("content-type") || "").includes("application/json") ? await response.json() : {};
+    // A 401 means the token is missing, invalid, or expired — show the login
+    // gate again rather than letting every open tab's data calls fail silently.
+    if (response.status === 401 && path !== "/api/admin/login") showAdminGate();
     if (!response.ok) { const e = new Error(data.message || `Backend returned ${response.status}`); e.status = response.status; throw e; }
     return data;
   } finally { clearTimeout(timeout); }
+}
+
+/* ---------- admin login gate ---------- */
+function showAdminGate() {
+  state.adminToken = "";
+  localStorage.removeItem("voyage_admin_token");
+  $("admin-login-form").reset(); $("admin-login-form").classList.remove("hidden");
+  $("admin-reset-form").reset(); $("admin-reset-form").classList.add("hidden");
+  $("admin-login-error").classList.add("hidden");
+  $("admin-gate").classList.remove("hidden"); $("admin-gate").classList.add("flex");
+  setTimeout(() => $("admin-login-password").focus(), 50);
+}
+function hideAdminGate() { $("admin-gate").classList.add("hidden"); $("admin-gate").classList.remove("flex"); }
+async function adminLogin(ev) {
+  ev.preventDefault();
+  const password = $("admin-login-password").value, err = $("admin-login-error"), btn = $("admin-login-submit");
+  if (!password) { err.textContent = "Enter the password."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Logging in\u2026";
+  try {
+    const r = await request("/api/admin/login", { method: "POST", body: { password } });
+    state.adminToken = r.token; localStorage.setItem("voyage_admin_token", r.token);
+    if (r.must_reset_password) {
+      $("admin-login-form").classList.add("hidden"); $("admin-reset-form").classList.remove("hidden");
+      setTimeout(() => $("admin-reset-password").focus(), 50);
+    } else {
+      hideAdminGate(); await bootDashboardData();
+    }
+  } catch (e) { err.textContent = e.message || "Incorrect password."; err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Log in"; }
+}
+async function adminSetFirstPassword(ev) {
+  ev.preventDefault();
+  const pw = $("admin-reset-password").value, confirm = $("admin-reset-confirm").value, err = $("admin-reset-error"), btn = $("admin-reset-submit");
+  if (pw.length < 6) { err.textContent = "Password must be at least 6 characters."; err.classList.remove("hidden"); return; }
+  if (pw !== confirm) { err.textContent = "Passwords don't match."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving\u2026";
+  try {
+    await request("/api/admin/set-password", { method: "POST", body: { new_password: pw } });
+    hideAdminGate(); toast("Password set."); await bootDashboardData();
+  } catch (e) { err.textContent = e.message || "Could not save that password."; err.classList.remove("hidden"); }
+  finally { btn.disabled = false; btn.textContent = "Save and continue"; }
+}
+function adminLogout() { localStorage.removeItem("voyage_admin_token"); location.reload(); }
+function toggleAdminChangePassword(open) {
+  const f = $("admin-change-password-form"); if (open) f.reset();
+  $("admin-cp-error").classList.add("hidden");
+  $("admin-change-password-overlay").classList.toggle("hidden", !open);
+  $("admin-change-password-overlay").classList.toggle("flex", open);
+}
+async function adminChangePassword(ev) {
+  ev.preventDefault();
+  const pw = $("admin-cp-new").value, confirm = $("admin-cp-confirm").value, err = $("admin-cp-error");
+  if (pw.length < 6) { err.textContent = "Password must be at least 6 characters."; err.classList.remove("hidden"); return; }
+  if (pw !== confirm) { err.textContent = "Passwords don't match."; err.classList.remove("hidden"); return; }
+  err.classList.add("hidden");
+  try { await request("/api/admin/set-password", { method: "POST", body: { new_password: pw } }); toggleAdminChangePassword(false); toast("Password updated."); }
+  catch (e) { err.textContent = e.message || "Could not save that password."; err.classList.remove("hidden"); }
 }
 function errorCopy(e, action) { if (e.name === "AbortError") return `${action} timed out — the server may be waking up, try again.`; return `${action} failed: ${e.message || "check the connection and retry."}`; }
 function statusPill(v) { const s = String(v || "Not configured"); const tone = /connected/i.test(s) ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700"; return `<span class="status-pill ${tone}">${esc(s)}</span>`; }
@@ -1345,12 +1462,30 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("leave-requests-filter").onchange = loadLeaveRequests;
   $("reg-requests-filter").onchange = loadRegRequests;
 
+  $("admin-login-form").onsubmit = adminLogin;
+  $("admin-reset-form").onsubmit = adminSetFirstPassword;
+  $("admin-logout").onclick = adminLogout;
+  $("open-change-admin-password").onclick = () => toggleAdminChangePassword(true);
+  $("admin-cp-cancel").onclick = () => toggleAdminChangePassword(false);
+  $("admin-change-password-form").onsubmit = adminChangePassword;
+
+  if (window.lucide) lucide.createIcons();
+  // A token saved from an earlier visit is tried optimistically; if it's
+  // expired or invalid, the first request() call that uses it will get a
+  // 401 and showAdminGate() takes over from there. With no token at all,
+  // skip straight to the login screen instead of firing doomed requests.
+  if (state.adminToken) { await bootDashboardData(); } else { showAdminGate(); }
+});
+
+// The real data load, run once after a valid login (fresh or from a saved
+// token) — pulled out of DOMContentLoaded so a first-login password reset
+// can trigger it too, without duplicating this list.
+async function bootDashboardData() {
   await loadHotels(); await loadEmployees(); await loadLeavePolicy(); await loadDefaultPassword();
   $("overview-status").textContent = state.backend ? "Backend status loaded." : "Backend unavailable.";
   renderKpis();
   updateApprovalsBadge();
-  if (window.lucide) lucide.createIcons();
-});
+}
 </script>
 </body>
 </html>
