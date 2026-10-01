@@ -206,6 +206,7 @@
               <div><label class="mb-1 block text-sm font-semibold">Name</label><input id="new-emp-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Hotel</label><select id="new-emp-hotel" class="w-full rounded-lg border p-2.5 text-sm"><option value="">Select hotel</option></select></div>
               <div><label class="mb-1 block text-sm font-semibold">Designation</label><input id="new-emp-role" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Department</label><input id="new-emp-department" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. Housekeeping"></div>
               <div><label class="mb-1 block text-sm font-semibold">Date of Joining</label><input id="new-emp-doj" type="date" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Card No / Device User ID <span class="font-normal text-slate-500">(numbers only — the biometric machine's own ID)</span></label><input id="new-emp-card" inputmode="numeric" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Property Identifier <span class="font-normal text-slate-500">(optional label, e.g. VCOR001)</span></label><input id="new-emp-property-code" class="w-full rounded-lg border p-2.5 text-sm"></div>
@@ -748,7 +749,7 @@ function renderEmployees() {
     const statusCell = r.status === "Exited"
       ? `<span class="status-pill bg-red-50 text-red-700">Exited</span><span class="block text-[11px] text-slate-500">LWD ${esc(r.last_working_day || "—")}</span>`
       : `<span class="status-pill bg-emerald-50 text-emerald-700">${esc(r.status || "Active")}</span>`;
-    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${Number(r.fixed_basic_salary) ? Number(r.fixed_basic_salary).toLocaleString() : "—"}</td><td class="p-3">${pfEsi}</td><td class="p-3">${bank}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${statusCell}</td><td class="p-3"><div class="flex flex-wrap gap-1.5"><button class="edit-employee rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Edit</button>${r.status !== "Exited" ? `<button class="exit-employee rounded border border-red-200 px-2 py-1 text-xs font-bold text-red-700" data-id="${esc(r.id)}">Exit</button>` : ""}<button class="reset-password rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}" data-name="${esc(r.name)}" title="Reset their portal password to the shared first-login password">Reset Password</button></div></td></tr>`;
+    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}${r.department ? `<span class="block text-xs font-normal text-slate-500">${esc(r.department)}</span>` : ""}</td><td class="p-3">${esc(r.machine_user_id || "—")}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${Number(r.fixed_basic_salary) ? Number(r.fixed_basic_salary).toLocaleString() : "—"}</td><td class="p-3">${pfEsi}</td><td class="p-3">${bank}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${statusCell}</td><td class="p-3"><div class="flex flex-wrap gap-1.5"><button class="edit-employee rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Edit</button>${r.status !== "Exited" ? `<button class="exit-employee rounded border border-red-200 px-2 py-1 text-xs font-bold text-red-700" data-id="${esc(r.id)}">Exit</button>` : ""}<button class="reset-password rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}" data-name="${esc(r.name)}" title="Reset their portal password to the shared first-login password">Reset Password</button></div></td></tr>`;
   }).join("");
   document.querySelectorAll(".edit-employee").forEach(b => b.onclick = () => openEditEmployee(b.dataset.id));
   document.querySelectorAll(".exit-employee").forEach(b => b.onclick = () => { switchTab("exit"); showExitSubview("exit-staff-view"); openExitForm(b.dataset.id); });
@@ -772,7 +773,7 @@ function openEditEmployee(id) {
   toggleAddEmployeeForm(true);
   $("new-emp-editing-id").value = r.id; $("new-emp-id").value = r.id; $("new-emp-id").disabled = true; // code can't change once created
   $("new-emp-name").value = r.name || ""; $("new-emp-hotel").value = r.hotel_id || ""; $("new-emp-role").value = r.role || "";
-  $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || "";
+  $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || ""; $("new-emp-department").value = r.department || "";
   $("new-emp-salary").value = r.monthly_salary || 0; $("new-emp-salary").dataset.original = Number(r.monthly_salary) || 0;
   $("new-emp-basic").value = r.fixed_basic_salary || 0; $("new-emp-pf").checked = !!r.pf_applicable; $("new-emp-esi").checked = !!r.esi_applicable;
   $("new-emp-bank-name").value = r.bank_name || ""; $("new-emp-bank-account").value = r.bank_account_no || ""; $("new-emp-ifsc").value = r.ifsc_code || "";
@@ -797,7 +798,7 @@ async function addEmployee(ev) {
   const incrementReason = $("new-emp-increment-reason").value;
   if (increasing && !incrementReason) { err.textContent = "Please select a reason for the salary increase."; err.classList.remove("hidden"); return; }
   err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
-  const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(),
+  const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(), department: $("new-emp-department").value.trim(),
     monthly_salary: salary, fixed_basic_salary: $("new-emp-basic").value || 0,
     pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked,
     date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim(),
@@ -839,7 +840,7 @@ async function deleteAllEmployees() {
   catch (e) { toast(errorCopy(e, "Delete all employees")); }
 }
 function downloadEmployeeTemplate() {
-  downloadCsv([{ EmpName: "Asha Rao", Cardno: "00000123", EmpCode: "VCOR045", Desig_Name: "Front Desk Executive", Branch: "Hotel Alpine Abode Continental",
+  downloadCsv([{ EmpName: "Asha Rao", Cardno: "00000123", EmpCode: "VCOR045", Desig_Name: "Front Desk Executive", Dept_Name: "Front Office", Branch: "Hotel Alpine Abode Continental",
     "Date of Joining": "2026-01-15", "Property ID": "VCOR045",
     "Gross Salary": "12000", "Fixed Basic Salary": "10558", "PF Applicable": "Yes", "ESI Applicable": "Yes",
     "Bank Name": "State Bank of India", "Bank Account No.": "000000000000", "IFSC Code": "SBIN0001234" }], "employee-import-template.csv");
@@ -850,7 +851,7 @@ async function importEmployees(file) {
     const c = {
       id: findCol(fields, ["empcode", "employeecode", "employeeid", "empid", "id"]), name: findCol(fields, NAME_ALIASES),
       card: findCol(fields, ["cardno", "cardnumber", "deviceuserid", "machineuserid", "userid"]),
-      role: findCol(fields, ["designame", "designation", "role", "position"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
+      role: findCol(fields, ["designame", "designation", "role", "position"]), department: findCol(fields, ["deptname", "department", "dept"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
       salary: findCol(fields, ["grosssalary", "monthlysalary", "salary"]), basic: findCol(fields, ["fixedbasicsalary", "basicsalary", "basic"]),
       pf: findCol(fields, ["pfapplicable", "pf"]), esi: findCol(fields, ["esiapplicable", "esi"]),
       doj: findCol(fields, ["dateofjoining", "doj", "joiningdate"]), prop: findCol(fields, ["propertyid", "propertycode"]),
@@ -860,7 +861,7 @@ async function importEmployees(file) {
     const rows = data.filter(r => r[c.id]).map(r => ({
       employee_id: r[c.id], name: r[c.name],
       machine_user_id: c.card && /^\d+$/.test(r[c.card] || "") ? r[c.card] : "",
-      role: c.role ? r[c.role] : "", hotel_id: c.hotel ? r[c.hotel] : "",
+      role: c.role ? r[c.role] : "", department: c.department ? r[c.department] : "", hotel_id: c.hotel ? r[c.hotel] : "",
       monthly_salary: c.salary ? r[c.salary].replace(/,/g, "") : undefined, date_of_joining: c.doj ? headerToIsoDate(r[c.doj], new Date().getFullYear()) || r[c.doj] : undefined,
       property_code: c.prop ? r[c.prop] : undefined,
       fixed_basic_salary: c.basic ? r[c.basic].replace(/,/g, "") : undefined,
@@ -1166,7 +1167,7 @@ function payrollRow(r) {
   const bank = r.bank_name || r.bank_account_no ? `${esc(r.bank_name || "—")}<span class="block text-[11px] font-normal text-slate-500">${esc(r.bank_account_no || "")} ${esc(r.ifsc_code || "")}</span>` : "—";
   const num = (cls, val, extra) => `<input type="number" step="0.01" class="${cls} w-24 rounded border p-1.5 text-sm" data-employee="${esc(r.employee_id)}" value="${val}" ${extra || ""}>`;
   return `<tr class="border-t">
-    <td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></td>
+    <td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span>${r.designation || r.department ? `<span class="block text-[11px] font-normal text-slate-400">${esc([r.designation, r.department].filter(Boolean).join(" · "))}</span>` : ""}</td>
     <td class="p-3 text-xs">${bank}</td>
     <td class="p-3">${num("salary-input", r.monthly_salary, `data-original="${r.monthly_salary}"`)}</td>
     <td class="p-3">${num("basic-input", r.fixed_basic_salary)}</td>

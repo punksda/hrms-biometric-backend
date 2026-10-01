@@ -88,6 +88,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS fixed_basic_salary NUMERIC DEFAULT 0;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS pf_applicable BOOLEAN DEFAULT true;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS esi_applicable BOOLEAN DEFAULT true;`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ifsc_code TEXT DEFAULT '';`);
@@ -504,7 +505,7 @@ function ptForSlab(grossP, slabs) {
 const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent", "half day", "on duty"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
   to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
-  fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
+  department, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
   to_char(last_working_day, 'YYYY-MM-DD') AS last_working_day, exit_reason, exit_note, ffs_amount, ffs_status`;
 
 async function getPayrollRates() {
@@ -649,7 +650,7 @@ async function computePayroll(hotelId, month) {
     const netPay = fnfAmount !== null ? fnfAmount : (onHold ? 0 : netBeforeHold);
     return {
       employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id,
-      designation: emp.role, bank_name: emp.bank_name || "", bank_account_no: emp.bank_account_no || "", ifsc_code: emp.ifsc_code || "",
+      designation: emp.role, department: emp.department || "", bank_name: emp.bank_name || "", bank_account_no: emp.bank_account_no || "", ifsc_code: emp.ifsc_code || "",
       monthly_salary: monthlySalary, fixed_basic_salary: Number(emp.fixed_basic_salary) || 0, days_in_month: dim,
       present_days: t.present, absent_days: t.absent, weekly_off_days: t.weekly_off,
       comp_off_days: t.comp_off, half_days: t.half_day, on_duty_days: t.on_duty, leave_days: t.leave, unpaid_leave_days: t.unpaid_leave,
@@ -1095,11 +1096,12 @@ app.post("/api/employees", async (req, res) => {
     const doj = ymd(body.date_of_joining);
     const r = await pool.query(
       `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
-         fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
-       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+         department, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
+       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [id, name, body.hotel_id ? String(body.hotel_id).trim() : "", body.role ? String(body.role).trim() : "",
        body.machine_user_id ? String(body.machine_user_id).trim() : "", salary, doj,
        body.property_code ? String(body.property_code).trim() : "",
+       body.department ? String(body.department).trim() : "",
        basicSalary, pfApplicable, esiApplicable,
        body.bank_name ? String(body.bank_name).trim() : "", body.bank_account_no ? String(body.bank_account_no).trim() : "",
        body.ifsc_code ? String(body.ifsc_code).trim().toUpperCase() : ""]
@@ -1145,8 +1147,8 @@ app.patch("/api/employees/:id", async (req, res) => {
     const ffsAmount = body.ffs_amount !== undefined ? (body.ffs_amount === null || body.ffs_amount === "" ? null : Number(body.ffs_amount)) : current.ffs_amount;
     const r = await pool.query(
       `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9,
-         fixed_basic_salary=$10, pf_applicable=$11, esi_applicable=$12, bank_name=$13, bank_account_no=$14, ifsc_code=$15,
-         last_working_day=$16, exit_reason=$17, exit_note=$18, ffs_amount=$19, ffs_status=$20
+         department=$10, fixed_basic_salary=$11, pf_applicable=$12, esi_applicable=$13, bank_name=$14, bank_account_no=$15, ifsc_code=$16,
+         last_working_day=$17, exit_reason=$18, exit_note=$19, ffs_amount=$20, ffs_status=$21
        WHERE id=$1 RETURNING *`,
       [
         req.params.id,
@@ -1157,6 +1159,7 @@ app.patch("/api/employees/:id", async (req, res) => {
         salary, doj,
         body.status !== undefined ? String(body.status).trim() : current.status,
         body.property_code !== undefined ? String(body.property_code).trim() : current.property_code,
+        body.department !== undefined ? String(body.department).trim() : current.department,
         basicSalary, pfApplicable, esiApplicable,
         body.bank_name !== undefined ? String(body.bank_name).trim() : current.bank_name,
         body.bank_account_no !== undefined ? String(body.bank_account_no).trim() : current.bank_account_no,
@@ -1309,24 +1312,25 @@ app.post("/api/employees/import", async (req, res) => {
              monthly_salary = COALESCE($7, monthly_salary),
              date_of_joining = COALESCE($8, date_of_joining),
              property_code = COALESCE(NULLIF($9, ''), property_code),
-             fixed_basic_salary = COALESCE($10, fixed_basic_salary),
-             pf_applicable = COALESCE($11, pf_applicable),
-             esi_applicable = COALESCE($12, esi_applicable),
-             bank_name = COALESCE(NULLIF($13, ''), bank_name),
-             bank_account_no = COALESCE(NULLIF($14, ''), bank_account_no),
-             ifsc_code = COALESCE(NULLIF($15, ''), ifsc_code)
+             department = COALESCE(NULLIF($10, ''), department),
+             fixed_basic_salary = COALESCE($11, fixed_basic_salary),
+             pf_applicable = COALESCE($12, pf_applicable),
+             esi_applicable = COALESCE($13, esi_applicable),
+             bank_name = COALESCE(NULLIF($14, ''), bank_name),
+             bank_account_no = COALESCE(NULLIF($15, ''), bank_account_no),
+             ifsc_code = COALESCE(NULLIF($16, ''), ifsc_code)
            WHERE id = $1`,
           [employee_id, row.name || "", row.machine_user_id || "", resolvedHotelId, row.role || "", row.status || "", salary, doj, row.property_code || "",
-           basicSalary, pfApplicable, esiApplicable, row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
+           row.department || "", basicSalary, pfApplicable, esiApplicable, row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
         );
         updated++;
       } else {
         await pool.query(
           `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
-             fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+             department, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
           [employee_id, row.name || "", resolvedHotelId, row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || "",
-           basicSalary || 0, pfApplicable === null ? true : pfApplicable, esiApplicable === null ? true : esiApplicable,
+           row.department || "", basicSalary || 0, pfApplicable === null ? true : pfApplicable, esiApplicable === null ? true : esiApplicable,
            row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
         );
         created++;
@@ -1855,7 +1859,7 @@ app.post("/api/self/set-password", requireEmployeeAuth, async (req, res) => {
 app.get("/api/self/me", requireEmployeeAuth, async (req, res) => {
   const emp = req.employee;
   const hotel = (await pool.query("SELECT name FROM hotels WHERE id = $1", [emp.hotel_id])).rows[0];
-  res.json({ status: "success", employee: { id: emp.id, name: emp.name, role: emp.role, hotel_id: emp.hotel_id,
+  res.json({ status: "success", employee: { id: emp.id, name: emp.name, role: emp.role, department: emp.department || "", hotel_id: emp.hotel_id,
     hotel_name: hotel ? hotel.name : "", date_of_joining: emp.date_of_joining } });
 });
 
@@ -1885,13 +1889,33 @@ app.get("/api/self/leaves", requireEmployeeAuth, async (req, res) => {
   }
 });
 
-// Query param: month ("YYYY-MM"). Same figures the Payroll tab computes.
+// A payslip for month "2026-09" releases on 2026-10-06 — the 6th of the
+// month AFTER the one it covers. Works uniformly for any month, including
+// the current or a future one: their release date is always still ahead,
+// so there's no separate "is this month even over yet" check needed.
+function payslipReleaseDate(month) {
+  const [y, m] = month.split("-").map(Number);
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  return `${ny}-${pad2(nm)}-06`;
+}
+
+// Query param: month ("YYYY-MM"). Same figures the Payroll tab computes,
+// but only released from the 6th of the following month — before that,
+// payroll may still be mid-processing (late attendance fixes, adjustments),
+// so showing a number early risks showing one that still changes.
 app.get("/api/self/payslip", requireEmployeeAuth, async (req, res) => {
   try {
     const month = req.query.month || todayIst().slice(0, 7);
+    const releaseDate = payslipReleaseDate(month);
+    if (todayIst() < releaseDate) {
+      return res.status(403).json({
+        status: "error", message: `Payroll for this month hasn't been processed yet. Payslips are released on the 6th of the following month (available from ${releaseDate}).`,
+        not_yet_released: true, available_from: releaseDate
+      });
+    }
     const all = await computePayroll(req.employee.hotel_id, month);
     const mine = all.find(r => r.employee_id === req.employee.id);
-    if (!mine) return res.status(404).json({ status: "error", message: "No payroll data for that month yet." });
+    if (!mine) return res.status(404).json({ status: "error", message: "No payroll data for that month." });
     res.json({ status: "success", month, payslip: mine });
   } catch (error) {
     console.error("GET /api/self/payslip failed:", error);
