@@ -145,11 +145,13 @@
           <h3 class="font-bold" style="color:var(--teal)">Apply for Leave</h3>
           <form id="apply-leave-form" class="mt-3 space-y-3">
             <div><label class="mb-1 block text-xs font-bold text-slate-600">Leave type</label>
-              <select id="leave-type" class="field"></select></div>
+              <select id="leave-type" class="field"></select>
+              <p id="leave-balance-hint" class="mt-1 text-xs text-slate-500"></p></div>
             <div class="grid grid-cols-2 gap-3">
               <div><label class="mb-1 block text-xs font-bold text-slate-600">From</label><input id="leave-start" type="date" class="field"></div>
               <div><label class="mb-1 block text-xs font-bold text-slate-600">To</label><input id="leave-end" type="date" class="field"></div>
             </div>
+            <p id="leave-window-hint" class="text-xs text-slate-500"></p>
             <div><label class="mb-1 block text-xs font-bold text-slate-600">Reason</label><input id="leave-reason" class="field" placeholder="Brief reason"></div>
             <p id="leave-error" class="hidden text-sm font-semibold text-red-700"></p>
             <div class="flex gap-2"><button id="leave-submit" type="submit" class="brass-btn flex-1 rounded-xl py-2.5 text-sm">Submit request</button><button id="cancel-apply-leave" type="button" class="ghost-btn rounded-xl px-4 text-sm">Cancel</button></div>
@@ -391,13 +393,21 @@ async function loadLeaves() {
   try {
     const d = await api(`/api/self/leaves?month=${new Date().toISOString().slice(0, 7)}`);
     state.leaveTypes = d.leave_types || [];
+    const fmtDays = n => Number(n).toFixed(n % 1 ? 1 : 0);
+    const upNote = up => up ? `<p class="mt-0.5 text-[11px] text-slate-400">after ${up} upcoming approved day${up === 1 ? "" : "s"}</p>` : "";
     const cards = state.leaveTypes.filter(t => t.paid).map(t => {
       const b = d.balances[t.name] || { balance: 0 };
-      return `<div class="card p-3"><p class="text-xs font-bold text-slate-500">${esc(t.name)}</p><p class="mt-1 text-xl font-extrabold" style="color:var(--teal)">${Number(b.balance).toFixed(b.balance % 1 ? 1 : 0)}</p></div>`;
+      return `<div class="card p-3"><p class="text-xs font-bold text-slate-500">${esc(t.name)}</p><p class="mt-1 text-xl font-extrabold" style="color:${b.balance < 0 ? "#B42318" : "var(--teal)"}">${fmtDays(b.balance)}</p>${upNote(b.upcoming)}</div>`;
     });
-    if (d.comp_off) cards.push(`<div class="card p-3"><p class="text-xs font-bold text-slate-500">Comp Off</p><p class="mt-1 text-xl font-extrabold" style="color:var(--teal)">${Number(d.comp_off.balance).toFixed(d.comp_off.balance % 1 ? 1 : 0)}</p></div>`);
+    if (d.comp_off) cards.push(`<div class="card p-3"><p class="text-xs font-bold text-slate-500">Comp Off</p><p class="mt-1 text-xl font-extrabold" style="color:${d.comp_off.balance < 0 ? "#B42318" : "var(--teal)"}">${fmtDays(d.comp_off.balance)}</p>${upNote(d.comp_off.upcoming)}</div>`);
     $("leave-balances").innerHTML = cards.join("");
+    // what the apply form can say about the chosen leave type, and how far ahead dates may go
+    state.balanceByType = {}; state.leaveTypes.forEach(t => { state.balanceByType[t.name] = t.paid ? fmtDays((d.balances[t.name] || { balance: 0 }).balance) + " day(s) left" : "unpaid"; });
+    if (d.comp_off) state.balanceByType["Comp Off"] = fmtDays(d.comp_off.balance) + " day(s) left";
+    state.latestLeaveDate = d.leave_window ? d.leave_window.latest_date : "";
+    state.leaveWindowMonths = d.leave_window ? d.leave_window.months : 0;
     $("leave-type").innerHTML = state.leaveTypes.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join("") + `<option value="Comp Off">Comp Off</option>`;
+    showLeaveHints();
     await loadLeaveRequests();
   } catch (e) { toast(e.message); }
 }
@@ -421,6 +431,14 @@ async function loadLeaveRequests() {
     <p class="text-xs text-slate-500 mt-1">${String(r.start_date).slice(0, 10)} → ${String(r.end_date).slice(0, 10)}${r.reason ? " · " + esc(r.reason) : ""}</p>
     ${managerNote(r)}${r.decision_note ? `<p class="text-xs text-slate-400 mt-1">Note: ${esc(r.decision_note)}</p>` : ""}</div>`).join("");
 }
+function showLeaveHints() {
+  const t = $("leave-type").value;
+  $("leave-balance-hint").textContent = t && state.balanceByType && state.balanceByType[t] ? `Balance: ${state.balanceByType[t]}. Leave already approved for later dates is already deducted.` : "";
+  const latest = state.latestLeaveDate || "";
+  $("leave-start").max = $("leave-end").max = latest;
+  $("leave-window-hint").textContent = latest ? `You can apply up to ${state.leaveWindowMonths} months ahead — the latest date you can pick is ${latest}.` : "";
+}
+$("leave-type").onchange = showLeaveHints;
 $("open-apply-leave").onclick = () => { $("apply-leave-panel").classList.remove("hidden"); $("leave-start").value = $("leave-end").value = new Date().toISOString().slice(0, 10); };
 $("cancel-apply-leave").onclick = () => { $("apply-leave-panel").classList.add("hidden"); $("apply-leave-form").reset(); $("leave-error").classList.add("hidden"); };
 $("apply-leave-form").onsubmit = async ev => {

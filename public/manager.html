@@ -133,6 +133,7 @@
     <button class="active" data-tab="leave">Leave requests<span id="badge-leave" class="badge hidden">0</span></button>
     <button data-tab="regularization">Attendance corrections<span id="badge-regularization" class="badge hidden">0</span></button>
     <button data-tab="attendance">Attendance (view only)</button>
+    <button data-tab="balances">Leave balances</button>
   </nav>
   <main>
     <section id="tab-leave" class="tabpanel active card panel">
@@ -161,6 +162,13 @@
       </div>
       <div id="att-empty" class="empty hidden">No attendance for this month yet.</div>
       <div id="att-wrap" class="scroll hidden" style="max-height:70vh"><table class="grid"><thead id="att-head"></thead><tbody id="att-body"></tbody></table></div>
+    </section>
+
+    <section id="tab-balances" class="tabpanel card panel">
+      <div class="bar"><h2>Leave balances — <span id="bal-hotel">your hotel</span></h2><span id="bal-asof" class="note"></span></div>
+      <div class="banner"><b>View only.</b> Remaining balance for everyone at your property. Leave already approved for later dates is deducted straight away; the small note shows how many days that is.</div>
+      <div id="bal-empty" class="empty hidden">No employees to show.</div>
+      <div id="bal-wrap" class="scroll hidden" style="max-height:70vh"><table><thead id="bal-head"></thead><tbody id="bal-body"></tbody></table></div>
     </section>
   </main>
 </div>
@@ -258,6 +266,7 @@ function switchTab(tab) {
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".tabpanel").forEach(p => p.classList.toggle("active", p.id === "tab-" + tab));
   if (tab === "leave" || tab === "regularization") loadRequests(tab);
+  if (tab === "balances") loadBalances();
   if (tab === "attendance") loadAttendance();
 }
 document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => switchTab(b.dataset.tab));
@@ -355,6 +364,26 @@ async function loadAttendance() {
         return `<td><div class="cell ${cellClass(r)}" title="${esc(r.status)}">${esc(shortLabel(r.status))}${detail}</div></td>`;
       }).join("")}</tr>`;
     }).join("");
+  } catch (e) { if (e.status === 401) logout(); else toast(e.message); }
+}
+
+/* ---------- leave balances (view only) ---------- */
+const fmtD = n => Number(n).toFixed(n % 1 ? 1 : 0);
+async function loadBalances() {
+  try {
+    const d = await api("/api/self/manager/leave-balances");
+    const recs = (d.records || []).slice().sort((a, b) => String(a.employee_id).localeCompare(String(b.employee_id), undefined, { numeric: true }));
+    $("bal-hotel").textContent = state.manager ? (state.manager.hotel_name || state.manager.hotel_id) : "your hotel";
+    $("bal-asof").textContent = d.as_of ? `as of ${d.as_of}` : "";
+    $("bal-empty").classList.toggle("hidden", recs.length > 0); $("bal-wrap").classList.toggle("hidden", recs.length === 0);
+    if (!recs.length) return;
+    const types = d.leave_types || [];
+    $("bal-head").innerHTML = `<tr><th>Employee</th>${types.map(t => `<th title="${esc(t.name)}">${esc(t.code)}<span class="sub2" style="text-transform:none;letter-spacing:0">${esc(t.name)}</span></th>`).join("")}<th>Comp Off</th></tr>`;
+    const cell = (balance, sub, upcoming) => `<td><b style="color:${balance < 0 ? "#B42318" : "inherit"}">${fmtD(balance)}</b><span class="sub2">${sub}${upcoming ? ` · ${upcoming} upcoming` : ""}</span></td>`;
+    $("bal-body").innerHTML = recs.map(r => `<tr><td><b>${esc(r.employee_id)}</b><span class="sub2">${esc(r.employee_name)}</span></td>${
+      types.map(t => { const b = r.balances[t.name] || { balance: 0, opening: 0, used: 0 };
+        return t.paid ? cell(b.balance, `of ${fmtD(b.opening)} · used ${b.used}`, b.upcoming) : `<td><b>${b.used}</b><span class="sub2">days taken${b.upcoming ? ` · ${b.upcoming} upcoming` : ""}</span></td>`; }).join("")
+      }${r.comp_off ? cell(r.comp_off.balance, `earned ${r.comp_off.earned} · used ${r.comp_off.used}`, r.comp_off.upcoming) : "<td>—</td>"}</tr>`).join("");
   } catch (e) { if (e.status === 401) logout(); else toast(e.message); }
 }
 

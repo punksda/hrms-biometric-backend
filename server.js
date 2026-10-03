@@ -529,23 +529,56 @@ function computeEntitlement(type, doj, fyStart, fyEnd, asOfDate) {
 // Otherwise the entitlement is computed fresh from the accrual rules above,
 // starting clean each financial year (nothing carries forward from the one
 // before — any unused days from last year simply don't count this year).
-function leaveBalanceFor(rows, type, opening, yearStart, doj, fyEnd, asOfDate) {
+function dayAfter(d) { return new Date(new Date(d + "T00:00:00Z").getTime() + 86400000).toISOString().slice(0, 10); }
+// How many days from..to (inclusive) are marked with this status — an approved
+// leave or an HR mark. Looks at the marks themselves rather than at the
+// day-by-day register, so leave approved for a FUTURE date counts the moment
+// it's approved. Days before joining / after the last working day never count.
+function countMarkedDays(overrides, status, from, to, doj, lwd) {
+  let n = 0;
+  for (const date of Object.keys(overrides || {})) {
+    if (overrides[date] !== status || date < from || date > to) continue;
+    if (doj && date < doj) continue;
+    if (lwd && date > lwd) continue;
+    n++;
+  }
+  return n;
+}
+// Register rows for days AFTER `afterDate` that already carry an approved leave
+// or an HR mark, so they show up in the register straight away.
+function upcomingMarkRows(emp, data, afterDate, throughDate) {
+  const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
+  const lwd = emp.last_working_day ? ymd(emp.last_working_day) : null;
+  const overrides = data.overrides || {}, roster = data.roster || {};
+  return Object.keys(overrides).sort().filter(d => d > afterDate && d <= throughDate && !(doj && d < doj) && !(lwd && d > lwd))
+    .map(date => ({ date, status: overrides[date], overridden: true, punches: 0, in_time: null, out_time: null, duty_minutes: null, shift: roster[date] || null }));
+}
+// `overrides` is the employee's date->status marks. `used` counts every day
+// marked with this leave type from the start of the balance up to usedThrough
+// (end of the financial year for the current period), so approved leave in the
+// future is deducted immediately; `upcoming` is the part of that after asOfDate.
+function leaveBalanceFor(overrides, type, opening, yearStart, doj, lwd, fyEnd, asOfDate, usedThrough) {
   const useOpening = !!opening && opening.asOf >= yearStart;
   const start = useOpening ? opening.asOf : yearStart;
   const base = useOpening ? opening.balance : computeEntitlement(type, doj, yearStart, fyEnd, asOfDate);
-  const used = rows.filter(r => r.status === type.name && r.date >= start).length;
-  return { opening: base, used, balance: Math.round((base - used) * 100) / 100, as_of: useOpening ? opening.asOf : null };
+  const used = countMarkedDays(overrides, type.name, start, usedThrough, doj, lwd);
+  const upFrom = dayAfter(asOfDate) > start ? dayAfter(asOfDate) : start;
+  const upcoming = asOfDate < usedThrough ? countMarkedDays(overrides, type.name, upFrom, usedThrough, doj, lwd) : 0;
+  return { opening: base, used, upcoming, balance: Math.round((base - used) * 100) / 100, as_of: useOpening ? opening.asOf : null };
 }
-function compLedgerFor(rows, opening) {
+// `upcoming` = comp-off days already approved for dates after today; they are
+// deducted straight away, the same as any other leave.
+function compLedgerFor(rows, opening, upcoming) {
   const start = opening ? opening.asOf : null;
   const base = opening ? opening.balance : 0;
+  const up = upcoming || 0;
   let earned = 0, used = 0;
   for (const r of rows) {
     if (start && r.date < start) continue;
     if (r.status === "Present (Worked Weekly Off)") earned++;
     else if (r.status === "Comp Off") used++;
   }
-  return { opening: base, earned, used, balance: base + earned - used, as_of: start };
+  return { opening: base, earned, used, upcoming: up, balance: base + earned - used - up, as_of: start };
 }
 
 // PF rounds to the NEAREST rupee (EPFO convention). ESI always rounds UP
@@ -617,6 +650,8 @@ function needsManagerStage(emp, hotelHasManager) {
 }
 // ==== PURE ENGINE END ====
 
+// How far ahead an employee may apply for leave.
+const MAX_LEAVE_ADVANCE_MONTHS = 3;
 const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent", "half day", "on duty"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
   to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
@@ -696,20 +731,34 @@ async function loadAttendanceContext(employees) {
   };
 }
 
-async function computeAttendance(hotelId, month) {
+// Future days are never "worked out" (no punches exist yet), so they stay blank
+// — except, with includeUpcoming, days that already carry an approved leave or
+// an HR mark, which show straight away. Payroll doesn't ask for those.
+async function computeAttendance(hotelId, month, opts = {}) {
   const employees = await getScopeEmployees(hotelId, month);
   if (!employees.length) return [];
   const monthStart = `${month}-01`;
   const monthEnd = `${month}-${pad2(daysInMonthOf(month))}`;
   const today = todayIst();
   const endDate = today < monthEnd ? today : monthEnd; // never mark future days
-  if (endDate < monthStart) return [];
+  if (endDate < monthStart && !opts.includeUpcoming) return [];
   const ctx = await loadAttendanceContext(employees);
   const results = [];
   for (const emp of employees) {
-    walkEmployee(emp, ctx.forEmployee(emp), monthStart, endDate)
-      .filter(r => r.date >= monthStart && r.date <= endDate)
-      .forEach(r => results.push({ employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id, ...r }));
+    const data = ctx.forEmployee(emp);
+    if (endDate >= monthStart) {
+      // Comp-off credits are earned and spent day by day, so the walk has to
+      // start where the comp-off balance starts — otherwise a credit already
+      // used in an earlier month would look unspent and be used again.
+      const compFrom = data.compOpening && data.compOpening.asOf < monthStart ? data.compOpening.asOf : monthStart;
+      walkEmployee(emp, data, compFrom, endDate)
+        .filter(r => r.date >= monthStart && r.date <= endDate)
+        .forEach(r => results.push({ employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id, ...r }));
+    }
+    if (opts.includeUpcoming) {
+      upcomingMarkRows(emp, data, endDate, monthEnd).filter(r => r.date >= monthStart)
+        .forEach(r => results.push({ employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id, ...r }));
+    }
   }
   return results.sort((a, b) => a.date === b.date ? String(a.employee_id).localeCompare(String(b.employee_id)) : a.date.localeCompare(b.date));
 }
@@ -807,15 +856,24 @@ async function computeLeaves(hotelId, month) {
   const openBy = {};
   balRes.rows.forEach(b => { (openBy[b.employee_id] ??= {})[b.leave_type] = { balance: Number(b.opening_balance), asOf: b.as_of }; });
 
+  // For the current period, leave already approved for later dates counts as
+  // used straight away. A past month shows its own end-of-month position.
+  const usedThrough = monthEnd >= today ? fyEnd : monthEnd;
   const records = employees.map(emp => {
-    const rows = walkEmployee(emp, ctx.forEmployee(emp), yearStart, endDate);
+    const data = ctx.forEmployee(emp);
+    const comp = data.compOpening;
+    const compFrom = comp && comp.asOf < yearStart ? comp.asOf : yearStart;
+    const rows = walkEmployee(emp, data, compFrom, endDate);
     const opens = openBy[emp.id] || {};
     const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
+    const lwd = emp.last_working_day ? ymd(emp.last_working_day) : null;
     const balances = {};
-    types.forEach(t => { balances[t.name] = leaveBalanceFor(rows, t, opens[t.name] || null, yearStart, doj, fyEnd, endDate); });
+    types.forEach(t => { balances[t.name] = leaveBalanceFor(data.overrides, t, opens[t.name] || null, yearStart, doj, lwd, fyEnd, endDate, usedThrough); });
+    const compUpFrom = comp && comp.asOf > dayAfter(endDate) ? comp.asOf : dayAfter(endDate);
+    const compUpcoming = endDate < usedThrough ? countMarkedDays(data.overrides, "Comp Off", compUpFrom, usedThrough, doj, lwd) : 0;
     return {
       employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id,
-      balances, comp_off: compLedgerFor(rows, opens["Comp Off"] || null)
+      balances, comp_off: compLedgerFor(rows, opens["Comp Off"] || null, compUpcoming)
     };
   });
   return { leave_types: types, year_start: yearStart, end_date: endDate, records };
@@ -1593,7 +1651,7 @@ app.get("/api/attendance", async (req, res) => {
   try {
     const hotelId = req.query.hotel_id || "all";
     const month = req.query.month || todayIst().slice(0, 7);
-    const records = await computeAttendance(hotelId, month);
+    const records = await computeAttendance(hotelId, month, { includeUpcoming: true });
     res.json({ status: "success", month, hotel_id: hotelId, records });
   } catch (error) {
     console.error("GET /api/attendance failed:", error);
@@ -2059,7 +2117,7 @@ app.get("/api/self/me", requireEmployeeAuth, async (req, res) => {
 app.get("/api/self/attendance", requireEmployeeAuth, async (req, res) => {
   try {
     const month = req.query.month || todayIst().slice(0, 7);
-    const all = await computeAttendance(req.employee.hotel_id, month);
+    const all = await computeAttendance(req.employee.hotel_id, month, { includeUpcoming: true });
     res.json({ status: "success", month, records: all.filter(r => r.employee_id === req.employee.id) });
   } catch (error) {
     console.error("GET /api/self/attendance failed:", error);
@@ -2073,7 +2131,8 @@ app.get("/api/self/leaves", requireEmployeeAuth, async (req, res) => {
     const month = req.query.month || todayIst().slice(0, 7);
     const result = await computeLeaves(req.employee.hotel_id, month);
     const mine = result.records.find(r => r.employee_id === req.employee.id) || { balances: {}, comp_off: null };
-    res.json({ status: "success", month, leave_types: result.leave_types, balances: mine.balances, comp_off: mine.comp_off });
+    res.json({ status: "success", month, leave_types: result.leave_types, balances: mine.balances, comp_off: mine.comp_off,
+      leave_window: { months: MAX_LEAVE_ADVANCE_MONTHS, latest_date: addMonths(todayIst(), MAX_LEAVE_ADVANCE_MONTHS) } });
   } catch (error) {
     console.error("GET /api/self/leaves failed:", error);
     res.status(500).json({ status: "error", message: error.message });
@@ -2139,6 +2198,10 @@ app.post("/api/self/leave-requests", requireEmployeeAuth, async (req, res) => {
     const reason = body.reason ? String(body.reason).trim() : "";
     if (!leaveType || !start || !end) return res.status(400).json({ status: "error", message: "Leave type, start date and end date are required." });
     if (end < start) return res.status(400).json({ status: "error", message: "End date can't be before the start date." });
+    const latestLeaveDate = addMonths(todayIst(), MAX_LEAVE_ADVANCE_MONTHS);
+    if (start > latestLeaveDate || end > latestLeaveDate) {
+      return res.status(400).json({ status: "error", message: `Leave can only be applied up to ${MAX_LEAVE_ADVANCE_MONTHS} months ahead — the latest date you can choose is ${latestLeaveDate}.` });
+    }
     const validType = leaveType === "Comp Off" || (await pool.query("SELECT 1 FROM leave_types WHERE name = $1", [leaveType])).rows.length;
     if (!validType) return res.status(400).json({ status: "error", message: `"${leaveType}" isn't a recognised leave type.` });
     const r = await pool.query(
@@ -2218,33 +2281,46 @@ app.get("/api/leave-requests", async (req, res) => {
 
 // Body: { decision: "Approved" | "Rejected", note }. Approving writes an
 // attendance_overrides row for every date in the request's range.
-// How many days of `typeName` this one employee has available, as of the
-// day BEFORE `fromDate` (i.e. not counting the leave request itself) —
-// used to decide how much of a leave request a balance can actually cover.
+// How many days of `typeName` this one employee can still be given for a
+// leave starting on `fromDate`. Every day already approved in that financial
+// year counts against it - including approved leave in the future - so two
+// requests can't both spend the same days. For Comp Off it is the comp-off
+// balance as of today less comp-off days already approved for later dates.
 async function getAvailableBalance(employeeId, typeName, fromDate) {
   const empRes = await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees WHERE id = $1`, [employeeId]);
   if (!empRes.rows.length) return null;
   const emp = empRes.rows[0];
+  const ctx = await loadAttendanceContext([emp]);
+  const data = ctx.forEmployee(emp);
+  const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
+  const lwd = emp.last_working_day ? ymd(emp.last_working_day) : null;
+  const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
+  const fyBounds = d => {
+    const y = Number(d.slice(0, 4)), m = Number(d.slice(5, 7));
+    const yearStart = `${m >= startMonth ? y : y - 1}-${pad2(startMonth)}-01`;
+    return { yearStart, fyEnd: ymd(new Date(new Date(addMonths(yearStart, 12) + "T00:00:00Z").getTime() - 86400000).toISOString()) };
+  };
+
+  if (typeName === "Comp Off") {
+    const today = todayIst();
+    const comp = data.compOpening;
+    const from = comp ? (comp.asOf < today ? comp.asOf : today) : fyBounds(today).yearStart;
+    const rows = walkEmployee(emp, data, from, today);
+    const upFrom = comp && comp.asOf > dayAfter(today) ? comp.asOf : dayAfter(today);
+    return compLedgerFor(rows, comp, countMarkedDays(data.overrides, "Comp Off", upFrom, "9999-12-31", doj, lwd)).balance;
+  }
+
   const typeRes = await pool.query("SELECT name, annual_days, accrual_type, min_service_months FROM leave_types WHERE name = $1", [typeName]);
   if (!typeRes.rows.length) return null;
-  const type = typeRes.rows[0];
-  const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
-  // Balance as of the day the request starts — not "the day before", which
-  // can roll into the PREVIOUS financial year entirely when a request starts
-  // right on the financial year's first day, wrongly inflating the result
-  // with a full year's entitlement from the year that's already ending.
-  const asOf = fromDate;
-  const y = Number(asOf.slice(0, 4)), m = Number(asOf.slice(5, 7));
-  const yearStart = `${m >= startMonth ? y : y - 1}-${pad2(startMonth)}-01`;
-  const fyEnd = ymd(new Date(new Date(addMonths(yearStart, 12) + "T00:00:00Z").getTime() - 86400000).toISOString());
-  const ctx = await loadAttendanceContext([emp]);
-  const rows = walkEmployee(emp, ctx.forEmployee(emp), yearStart, asOf < yearStart ? yearStart : asOf);
+  const { yearStart, fyEnd } = fyBounds(fromDate);
   const balRes = await pool.query(
     "SELECT opening_balance, to_char(as_of,'YYYY-MM-DD') AS as_of FROM leave_balances WHERE employee_id = $1 AND leave_type = $2", [employeeId, typeName]
   );
   const opening = balRes.rows.length ? { balance: Number(balRes.rows[0].opening_balance), asOf: balRes.rows[0].as_of } : null;
-  const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
-  return leaveBalanceFor(rows, type, opening, yearStart, doj, fyEnd, asOf).balance;
+  // Entitlement is worked out as of the day the leave starts (not the day before,
+  // which can fall into the previous financial year when a request starts on its
+  // first day); usage is everything approved in the year, before or after.
+  return leaveBalanceFor(data.overrides, typeRes.rows[0], opening, yearStart, doj, lwd, fyEnd, fromDate, fyEnd).balance;
 }
 
 app.post("/api/leave-requests/:id/decide", async (req, res) => {
@@ -2460,10 +2536,24 @@ app.post("/api/self/manager/regularization-requests/:id/decide", requireEmployee
 app.get("/api/self/manager/attendance", requireEmployeeAuth, requireManagerAuth, async (req, res) => {
   try {
     const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(req.query.month || "") ? req.query.month : todayIst().slice(0, 7);
-    const records = await computeAttendance(req.employee.hotel_id, month);
+    const records = await computeAttendance(req.employee.hotel_id, month, { includeUpcoming: true });
     res.json({ status: "success", month, hotel_id: req.employee.hotel_id, records });
   } catch (error) {
     console.error("GET /api/self/manager/attendance failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Leave balances for every employee at the manager's own property, as of today.
+// Read-only; the hotel comes from the manager's own record, never from the request.
+app.get("/api/self/manager/leave-balances", requireEmployeeAuth, requireManagerAuth, async (req, res) => {
+  try {
+    const month = todayIst().slice(0, 7);
+    const result = await computeLeaves(req.employee.hotel_id, month);
+    res.json({ status: "success", month, hotel_id: req.employee.hotel_id, as_of: result.end_date,
+      leave_types: result.leave_types, records: result.records });
+  } catch (error) {
+    console.error("GET /api/self/manager/leave-balances failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
 });

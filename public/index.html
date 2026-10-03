@@ -376,6 +376,18 @@
             <tbody id="leaves-table"></tbody>
           </table></div>
         </section>
+
+        <section class="panel mt-6 rounded-2xl bg-white p-5 md:p-6">
+          <h3 class="font-bold">3 · Comp Off opening balance</h3>
+          <p class="mt-1 max-w-3xl text-sm text-slate-600">Upload each person's comp-off balance <b>as at the end of a day</b> (for example 30 September). From the next day HRMS keeps it up to date by itself from the attendance register: <b>+1</b> when someone works on their rostered weekly off, <b>−1</b> when a comp-off is used (an absence it covers, or comp-off leave you approve). Include <b>everyone</b> — the template is pre-filled with 0, so just change the people who have a balance. Uploading again replaces the earlier balances.</p>
+          <div class="mt-4 flex flex-wrap items-end gap-3">
+            <div><label class="mb-1 block text-xs font-semibold text-slate-600">Balance is as at the END of</label><input id="compoff-asof" type="date" class="rounded-lg border p-2 text-sm"></div>
+            <input id="compoff-file" type="file" accept=".csv" class="hidden">
+            <button id="download-compoff-template" class="rounded-lg border px-3 py-2 text-sm font-bold">Download Template</button>
+            <button id="upload-compoff" class="rounded-lg bg-[#FFA800] hover:brightness-95 px-3 py-2 text-sm font-bold text-[#003126]">Upload Comp Off Balances</button>
+          </div>
+          <p id="compoff-note" class="mt-3 text-xs text-slate-500"></p>
+        </section>
       </section>
 
       <!-- PAYROLL -->
@@ -1140,8 +1152,8 @@ async function loadLeaves() {
   catch (e) { toast(errorCopy(e, "Load leaves")); }
 }
 function balanceCell(b, type) {
-  if (!type.paid) return `<td class="border-l p-3"><span class="font-semibold">${b.used}</span><span class="block text-[11px] text-slate-500">days used</span></td>`;
-  return `<td class="border-l p-3"><span class="font-semibold ${b.balance < 0 ? "text-red-700" : "text-slate-900"}">${fmtNum(b.balance)}</span><span class="block text-[11px] text-slate-500">start ${fmtNum(b.opening)} · used ${b.used}</span></td>`;
+  if (!type.paid) return `<td class="border-l p-3"><span class="font-semibold">${b.used}</span><span class="block text-[11px] text-slate-500">days used${b.upcoming ? ` (${b.upcoming} upcoming)` : ""}</span></td>`;
+  return `<td class="border-l p-3"><span class="font-semibold ${b.balance < 0 ? "text-red-700" : "text-slate-900"}">${fmtNum(b.balance)}</span><span class="block text-[11px] text-slate-500">start ${fmtNum(b.opening)} · used ${b.used}${b.upcoming ? ` (${b.upcoming} upcoming)` : ""}</span></td>`;
 }
 function renderLeaves() {
   const empty = $("leaves-empty"), wrap = $("leaves-table-wrap"), L = state.leaves;
@@ -1150,14 +1162,14 @@ function renderLeaves() {
   $("leaves-table-head").innerHTML = `<tr><th class="sticky-col min-w-[190px] bg-slate-50 p-3">Employee</th>${L.leave_types.map(t => `<th class="min-w-[120px] border-l p-3" title="${esc(t.name)}">${esc(t.code)}<span class="block font-normal normal-case text-slate-500">${esc(t.name)}</span></th>`).join("")}<th class="min-w-[150px] border-l p-3">Comp Off<span class="block font-normal normal-case text-slate-500">from duty roster</span></th></tr>`;
   $("leaves-table").innerHTML = L.records.slice().sort((a, b) => natural(a.employee_id, b.employee_id)).map(r => {
     const c = r.comp_off;
-    return `<tr class="border-t"><th class="sticky-col bg-white p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></th>${L.leave_types.map(t => balanceCell(r.balances[t.name], t)).join("")}<td class="border-l p-3"><span class="font-semibold ${c.balance < 0 ? "text-red-700" : "text-slate-900"}">${fmtNum(c.balance)}</span><span class="block text-[11px] text-slate-500">start ${fmtNum(c.opening)} · earned ${c.earned} · used ${c.used}</span></td></tr>`;
+    return `<tr class="border-t"><th class="sticky-col bg-white p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></th>${L.leave_types.map(t => balanceCell(r.balances[t.name], t)).join("")}<td class="border-l p-3"><span class="font-semibold ${c.balance < 0 ? "text-red-700" : "text-slate-900"}">${fmtNum(c.balance)}</span><span class="block text-[11px] text-slate-500">start ${fmtNum(c.opening)} · earned ${c.earned} · used ${c.used}${c.upcoming ? ` · ${c.upcoming} upcoming` : ""}</span></td></tr>`;
   }).join("");
 }
 function exportLeaves() {
   const L = state.leaves; if (!L || !L.records.length) { toast("Nothing to export yet."); return; }
   downloadCsv(L.records.map(r => { const o = { employee_code: r.employee_id, employee_name: r.employee_name };
-    L.leave_types.forEach(t => { const b = r.balances[t.name]; o[`${t.code} balance`] = t.paid ? fmtNum(b.balance) : ""; o[`${t.code} used`] = b.used; });
-    o["Comp Off balance"] = fmtNum(r.comp_off.balance); o["Comp Off earned"] = r.comp_off.earned; o["Comp Off used"] = r.comp_off.used; return o; }), `leave-balances-${selectedMonth()}.csv`);
+    L.leave_types.forEach(t => { const b = r.balances[t.name]; o[`${t.code} balance`] = t.paid ? fmtNum(b.balance) : ""; o[`${t.code} used`] = b.used; o[`${t.code} upcoming`] = b.upcoming || 0; });
+    o["Comp Off balance"] = fmtNum(r.comp_off.balance); o["Comp Off earned"] = r.comp_off.earned; o["Comp Off used"] = r.comp_off.used; o["Comp Off upcoming"] = r.comp_off.upcoming || 0; return o; }), `leave-balances-${selectedMonth()}.csv`);
 }
 function downloadBalanceTemplate() {
   const emps = scopeEmployees();
@@ -1190,6 +1202,36 @@ async function uploadBalances(file) {
     if (ignored.length) msg += ` Ignored columns: ${ignored.slice(0, 4).join(", ")}.`;
     toast(msg); await loadLeaves();
   } catch (e) { toast(e.message || errorCopy(e, "Upload balances")); } finally { $("balance-file").value = ""; }
+}
+
+/* ---------- comp-off opening balance ---------- */
+const nextDay = d => new Date(new Date(d + "T00:00:00Z").getTime() + 86400000).toISOString().slice(0, 10);
+function setCompOffDefaultDate() {
+  const n = new Date(), last = new Date(n.getFullYear(), n.getMonth(), 0);            // last day of last month
+  $("compoff-asof").value = `${last.getFullYear()}-${pad2(last.getMonth() + 1)}-${pad2(last.getDate())}`;
+}
+function downloadCompOffTemplate() {
+  const emps = state.employees.filter(e => e.status !== "Exited").slice().sort((a, b) => natural(a.id, b.id));
+  if (!emps.length) { toast("Add employees first — the template is built from them."); return; }
+  downloadCsv(emps.map(e => ({ employee_id: e.id, employee_name: e.name, hotel: hotelName(e.hotel_id), comp_off_balance: 0 })), "comp-off-opening-balances.csv");
+  toast(`Template has all ${emps.length} current employees, pre-filled with 0. Change the people who have a balance.`);
+}
+async function uploadCompOff(file) {
+  const endDay = $("compoff-asof").value;
+  if (!endDay) { toast("Choose the date the balances are as at the end of."); return; }
+  try {
+    const { fields, data } = await readCsvFile(file);
+    const idCol = findCol(fields, ID_ALIASES), balCol = findCol(fields, ["compoffbalance", "compoff", "balance", "openingbalance", "co"]);
+    if (!idCol || !balCol) throw new Error("The file needs an employee_id column and a comp_off_balance column. Use “Download Template” for the layout.");
+    const rows = data.filter(r => r[idCol] && String(r[balCol]).trim() !== "").map(r => ({ employee_id: r[idCol], leave_type: "Comp Off", balance: String(r[balCol]).trim() }));
+    if (!rows.length) throw new Error("No balances found in that file.");
+    const asOf = nextDay(endDay);                       // "end of 30 Sep" = "start of 1 Oct" for the engine
+    const r = await request("/api/leave-balances/import", { method: "POST", body: { as_of: asOf, rows }, timeout: 180000 });
+    let msg = `Comp-off balances saved for ${r.applied} people as at the end of ${endDay}. From ${asOf} they update automatically.`;
+    if (r.unknown_employee_count) msg += ` ${r.unknown_employee_count} employee code(s) weren't found and were skipped (e.g. ${r.unknown_employees.slice(0, 3).join(", ")}).`;
+    if (r.skipped) msg += ` ${r.skipped} row(s) had no valid number.`;
+    $("compoff-note").textContent = msg; toast(msg); await loadLeaves();
+  } catch (e) { toast(e.message || errorCopy(e, "Upload comp-off balances")); } finally { $("compoff-file").value = ""; }
 }
 
 /* ---------- payroll ---------- */
@@ -1525,6 +1567,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("download-balance-template").onclick = downloadBalanceTemplate;
   $("upload-balances").onclick = () => $("balance-file").click(); $("balance-file").onchange = e => { if (e.target.files[0]) uploadBalances(e.target.files[0]); };
   $("download-leaves").onclick = exportLeaves;
+  setCompOffDefaultDate();
+  $("download-compoff-template").onclick = downloadCompOffTemplate;
+  $("upload-compoff").onclick = () => $("compoff-file").click();
+  $("compoff-file").onchange = e => { if (e.target.files[0]) uploadCompOff(e.target.files[0]); };
 
   $("download-payroll").onclick = () => downloadCsv(state.payroll.map(r => ({
     "Employee Name": r.employee_name, "Employee Code": r.employee_id, "Designation": r.designation,
