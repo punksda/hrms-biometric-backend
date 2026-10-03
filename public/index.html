@@ -233,6 +233,7 @@
               <div class="flex items-end gap-4 pb-1">
                 <label class="flex items-center gap-2 text-sm font-semibold"><input id="new-emp-pf" type="checkbox" checked class="h-4 w-4 rounded border-slate-300">PF applicable</label>
                 <label class="flex items-center gap-2 text-sm font-semibold"><input id="new-emp-esi" type="checkbox" checked class="h-4 w-4 rounded border-slate-300">ESI applicable</label>
+                <label class="flex items-center gap-2 text-sm font-semibold" title="Lets this person sign in at /manager to approve their hotel's leave and attendance-correction requests, and view (not edit) their hotel's attendance."><input id="new-emp-is-manager" type="checkbox" class="h-4 w-4 rounded border-slate-300">Hotel manager <span class="font-normal text-slate-500">(approves their hotel's requests; not for Corporate Office)</span></label>
               </div>
               <div class="md:col-span-3 mt-1 border-t border-amber-200 pt-3 text-xs font-bold uppercase tracking-wide text-[#003126]">Bank details</div>
               <div><label class="mb-1 block text-sm font-semibold">Bank Name</label><input id="new-emp-bank-name" class="w-full rounded-lg border p-2.5 text-sm"></div>
@@ -440,17 +441,18 @@
       <section id="approvals" class="tab-view">
         <p class="text-sm font-semibold text-[#003126]">Employee self-service</p>
         <h2 class="section-title text-3xl font-bold">Approvals</h2>
-        <p class="mt-1 text-sm text-slate-500">Leave and attendance-correction requests employees submit from their own portal.</p>
+        <p class="mt-1 text-sm text-slate-500">Leave and attendance-correction requests employees submit from their own portal. For hotels with a manager, the request reaches you only after their hotel manager approves it — you give the final approval, and only then does attendance change. Corporate Office requests come straight here.</p>
 
         <section class="panel mt-6 rounded-2xl bg-white p-6">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="font-bold">Leave Requests</h3>
             <select id="leave-requests-filter" class="rounded-lg border p-2 text-sm">
-              <option value="Pending" selected>Pending</option>
+              <option value="Pending" selected>Ready for HRMS</option>
+              <option value="awaiting_manager">Waiting for hotel manager</option>
               <option value="all">All</option>
             </select>
           </div>
-          <div id="leave-requests-empty" class="mt-4 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">Nothing pending.</div>
+          <div id="leave-requests-empty" class="mt-4 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">Nothing here.</div>
           <div id="leave-requests-wrap" class="table-scroll mt-4 hidden"><table class="w-full min-w-[820px] text-left text-sm">
             <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Leave Type</th><th class="p-3">Dates</th><th class="p-3">Reason</th><th class="p-3">Status</th><th class="p-3">Actions</th></tr></thead>
             <tbody id="leave-requests-table"></tbody>
@@ -461,11 +463,12 @@
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="font-bold">Regularization Requests</h3>
             <select id="reg-requests-filter" class="rounded-lg border p-2 text-sm">
-              <option value="Pending" selected>Pending</option>
+              <option value="Pending" selected>Ready for HRMS</option>
+              <option value="awaiting_manager">Waiting for hotel manager</option>
               <option value="all">All</option>
             </select>
           </div>
-          <div id="reg-requests-empty" class="mt-4 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">Nothing pending.</div>
+          <div id="reg-requests-empty" class="mt-4 rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">Nothing here.</div>
           <div id="reg-requests-wrap" class="table-scroll mt-4 hidden"><table class="w-full min-w-[760px] text-left text-sm">
             <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Employee</th><th class="p-3">Date</th><th class="p-3">Requested Status</th><th class="p-3">Reason</th><th class="p-3">Status</th><th class="p-3">Actions</th></tr></thead>
             <tbody id="reg-requests-table"></tbody>
@@ -757,7 +760,7 @@ function renderEmployees() {
   if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); return; }
   empty.classList.add("hidden"); wrap.classList.remove("hidden");
   $("employee-table").innerHTML = rows.map(r => {
-    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}${r.status === "Exited" ? `<span class="status-pill mt-1 inline-block bg-red-50 text-red-700">Exited</span>` : ""}</td><td class="p-3">${esc(r.name)}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}${r.department ? `<span class="block text-xs font-normal text-slate-500">${esc(r.department)}</span>` : ""}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${esc(r.emergency_contact || "—")}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${esc(r.last_increment_date || "—")}</td><td class="p-3"><div class="flex flex-wrap gap-1.5"><button class="edit-employee rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Edit</button>${r.status !== "Exited" ? `<button class="exit-employee rounded border border-red-200 px-2 py-1 text-xs font-bold text-red-700" data-id="${esc(r.id)}">Exit</button>` : ""}<button class="reset-password rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}" data-name="${esc(r.name)}" title="Reset their portal password to the shared first-login password">Reset Password</button></div></td></tr>`;
+    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.id)}${r.property_code ? `<span class="block text-xs font-normal text-slate-500">${esc(r.property_code)}</span>` : ""}${r.status === "Exited" ? `<span class="status-pill mt-1 inline-block bg-red-50 text-red-700">Exited</span>` : ""}</td><td class="p-3">${esc(r.name)}${r.is_manager ? `<span class="status-pill ml-1.5 bg-amber-50 text-[#003126]" title="Can approve their hotel's requests at /manager">Manager</span>` : ""}</td><td class="p-3">${esc(hotelName(r.hotel_id))}</td><td class="p-3">${esc(r.role || "—")}${r.department ? `<span class="block text-xs font-normal text-slate-500">${esc(r.department)}</span>` : ""}</td><td class="p-3">${Number(r.monthly_salary) ? Number(r.monthly_salary).toLocaleString() : "—"}</td><td class="p-3">${esc(r.emergency_contact || "—")}</td><td class="p-3">${esc(r.date_of_joining || "—")}</td><td class="p-3">${esc(r.last_increment_date || "—")}</td><td class="p-3"><div class="flex flex-wrap gap-1.5"><button class="edit-employee rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}">Edit</button>${r.status !== "Exited" ? `<button class="exit-employee rounded border border-red-200 px-2 py-1 text-xs font-bold text-red-700" data-id="${esc(r.id)}">Exit</button>` : ""}<button class="reset-password rounded border px-2 py-1 text-xs font-bold" data-id="${esc(r.id)}" data-name="${esc(r.name)}" title="Reset their portal password to the shared first-login password">Reset Password</button></div></td></tr>`;
   }).join("");
   document.querySelectorAll(".edit-employee").forEach(b => b.onclick = () => openEditEmployee(b.dataset.id));
   document.querySelectorAll(".exit-employee").forEach(b => b.onclick = () => { switchTab("exit"); showExitSubview("exit-staff-view"); openExitForm(b.dataset.id); });
@@ -768,7 +771,7 @@ async function loadEmployees() { try { const data = await request("/api/employee
 function toggleAddEmployeeForm(open) {
   const f = $("add-employee-form"); f.classList.toggle("hidden", !open);
   if (!open) {
-    f.reset(); $("new-emp-pf").checked = true; $("new-emp-esi").checked = true; $("add-employee-error").classList.add("hidden");
+    f.reset(); $("new-emp-pf").checked = true; $("new-emp-esi").checked = true; $("new-emp-is-manager").checked = false; $("add-employee-error").classList.add("hidden");
     $("new-emp-editing-id").value = ""; $("new-emp-id").disabled = false;
     $("new-emp-salary").dataset.original = ""; $("new-emp-increment-wrap").classList.add("hidden");
     $("employee-form-title").textContent = "Add Employee"; $("employee-form-hint").classList.add("hidden");
@@ -783,7 +786,7 @@ function openEditEmployee(id) {
   $("new-emp-name").value = r.name || ""; $("new-emp-hotel").value = r.hotel_id || ""; $("new-emp-role").value = r.role || "";
   $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || ""; $("new-emp-department").value = r.department || ""; $("new-emp-emergency-contact").value = r.emergency_contact || ""; $("new-emp-last-increment").value = r.last_increment_date || "";
   $("new-emp-salary").value = r.monthly_salary || 0; $("new-emp-salary").dataset.original = Number(r.monthly_salary) || 0;
-  $("new-emp-basic").value = r.fixed_basic_salary || 0; $("new-emp-pf").checked = !!r.pf_applicable; $("new-emp-esi").checked = !!r.esi_applicable;
+  $("new-emp-basic").value = r.fixed_basic_salary || 0; $("new-emp-pf").checked = !!r.pf_applicable; $("new-emp-esi").checked = !!r.esi_applicable; $("new-emp-is-manager").checked = !!r.is_manager;
   $("new-emp-bank-name").value = r.bank_name || ""; $("new-emp-bank-account").value = r.bank_account_no || ""; $("new-emp-ifsc").value = r.ifsc_code || "";
   $("employee-form-title").textContent = `Edit ${r.name}`; $("employee-form-hint").classList.remove("hidden");
   $("submit-add-employee").textContent = "Save changes";
@@ -808,7 +811,7 @@ async function addEmployee(ev) {
   err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
   const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(), department: $("new-emp-department").value.trim(), emergency_contact: $("new-emp-emergency-contact").value.trim(), last_increment_date: $("new-emp-last-increment").value || "",
     monthly_salary: salary, fixed_basic_salary: $("new-emp-basic").value || 0,
-    pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked,
+    pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked, is_manager: $("new-emp-is-manager").checked,
     date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim(),
     bank_name: $("new-emp-bank-name").value.trim(), bank_account_no: acctNo, ifsc_code: ifsc };
   if (increasing) { payload.increment_reason = incrementReason; payload.increment_note = $("new-emp-increment-note").value.trim(); }
@@ -1375,6 +1378,34 @@ async function resetEmployeePassword(id, name) {
   catch (e) { toast(errorCopy(e, "Reset password")); }
 }
 
+// Where a request is right now, in plain words, plus a line on what the hotel manager did.
+function requestStage(r) {
+  if (r.status === "Approved") return { label: "Approved", cls: "bg-emerald-50 text-emerald-700" };
+  if (r.status === "Rejected") return { label: r.manager_status === "Rejected" ? "Rejected by manager" : "Rejected", cls: "bg-red-50 text-red-700" };
+  if (r.manager_status === "Pending") return { label: "With hotel manager", cls: "bg-sky-50 text-sky-700" };
+  return { label: "Ready for HRMS", cls: "bg-amber-50 text-amber-700" };
+}
+function stageCell(r) {
+  const st = requestStage(r);
+  let line = "";
+  if (r.manager_status === "Approved") line = `Approved by manager ${esc(r.manager_name || "")}${r.manager_note ? ` — “${esc(r.manager_note)}”` : ""}`;
+  else if (r.manager_status === "Rejected") line = `Rejected by manager ${esc(r.manager_name || "")}${r.manager_note ? ` — “${esc(r.manager_note)}”` : ""}`;
+  else if (r.manager_status === "Skipped") line = "HRMS took this over from the hotel manager";
+  return `<span class="status-pill ${st.cls}">${st.label}</span>${line ? `<span class="mt-1 block max-w-[240px] text-[11px] text-slate-500">${line}</span>` : ""}`;
+}
+function requestActions(r, cls) {
+  if (r.status !== "Pending") return r.decision_note ? esc(r.decision_note) : "—";
+  if (r.manager_status === "Pending") return `<button class="take-over rounded border border-slate-300 px-2 py-1 text-xs font-bold" data-kind="${cls === "decide-leave" ? "leave" : "regularization"}" data-id="${r.id}" title="Skip the hotel manager and decide this yourself">Take over</button>`;
+  return `<div class="flex gap-1.5"><button class="${cls} rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700" data-id="${r.id}" data-decision="Approved">Approve</button><button class="${cls} rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-bold text-red-700" data-id="${r.id}" data-decision="Rejected">Reject</button></div>`;
+}
+const dOnly = v => String(v || "").slice(0, 10);   // the server sends dates as full timestamps
+const empCell = r => `<td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span><span class="block text-[11px] font-normal text-slate-400">${esc(hotelName(r.hotel_id))}</span></td>`;
+function bindTakeOver() { document.querySelectorAll(".take-over").forEach(b => b.onclick = () => takeOverRequest(b.dataset.kind, b.dataset.id)); }
+async function takeOverRequest(kind, id) {
+  if (!confirm("This request is waiting for the hotel manager. Take it over and decide it yourself instead?")) return;
+  try { await request(`/api/${kind}-requests/${enc(id)}/take-over`, { method: "POST" }); toast("Taken over — it's now in your queue."); await loadLeaveRequests(); await loadRegRequests(); }
+  catch (e) { toast(errorCopy(e, "Take over request")); }
+}
 function requestStatusPill(s) { return `<span class="status-pill ${s === "Approved" ? "bg-emerald-50 text-emerald-700" : s === "Rejected" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}">${esc(s)}</span>`; }
 async function decideRequest(kind, id, decision) {
   let note = "";
@@ -1392,7 +1423,8 @@ async function loadLeaveRequests() {
     if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); }
     else {
       empty.classList.add("hidden"); wrap.classList.remove("hidden");
-      $("leave-requests-table").innerHTML = rows.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></td><td class="p-3">${esc(r.leave_type)}</td><td class="p-3">${r.start_date}${r.start_date !== r.end_date ? ` → ${r.end_date}` : ""}</td><td class="p-3">${esc(r.reason || "—")}</td><td class="p-3">${requestStatusPill(r.status)}</td><td class="p-3">${r.status === "Pending" ? `<div class="flex gap-1.5"><button class="decide-leave rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700" data-id="${r.id}" data-decision="Approved">Approve</button><button class="decide-leave rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-bold text-red-700" data-id="${r.id}" data-decision="Rejected">Reject</button></div>` : (r.decision_note ? esc(r.decision_note) : "—")}</td></tr>`).join("");
+      $("leave-requests-table").innerHTML = rows.map(r => `<tr class="border-t">${empCell(r)}<td class="p-3">${esc(r.leave_type)}</td><td class="p-3">${dOnly(r.start_date)}${dOnly(r.start_date) !== dOnly(r.end_date) ? ` → ${dOnly(r.end_date)}` : ""}</td><td class="p-3">${esc(r.reason || "—")}</td><td class="p-3">${stageCell(r)}</td><td class="p-3">${requestActions(r, "decide-leave")}</td></tr>`).join("");
+      bindTakeOver();
       document.querySelectorAll(".decide-leave").forEach(b => b.onclick = () => decideRequest("leave", b.dataset.id, b.dataset.decision));
     }
     updateApprovalsBadge();
@@ -1405,7 +1437,8 @@ async function loadRegRequests() {
     if (!rows.length) { empty.classList.remove("hidden"); wrap.classList.add("hidden"); }
     else {
       empty.classList.add("hidden"); wrap.classList.remove("hidden");
-      $("reg-requests-table").innerHTML = rows.map(r => `<tr class="border-t"><td class="p-3 font-semibold">${esc(r.employee_id)}<span class="block text-xs font-normal text-slate-500">${esc(r.employee_name)}</span></td><td class="p-3">${r.date}</td><td class="p-3">${esc(r.requested_status)}</td><td class="p-3">${esc(r.reason || "—")}</td><td class="p-3">${requestStatusPill(r.status)}</td><td class="p-3">${r.status === "Pending" ? `<div class="flex gap-1.5"><button class="decide-reg rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700" data-id="${r.id}" data-decision="Approved">Approve</button><button class="decide-reg rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-bold text-red-700" data-id="${r.id}" data-decision="Rejected">Reject</button></div>` : (r.decision_note ? esc(r.decision_note) : "—")}</td></tr>`).join("");
+      $("reg-requests-table").innerHTML = rows.map(r => `<tr class="border-t">${empCell(r)}<td class="p-3">${dOnly(r.date)}</td><td class="p-3">${esc(r.requested_status)}</td><td class="p-3">${esc(r.reason || "—")}</td><td class="p-3">${stageCell(r)}</td><td class="p-3">${requestActions(r, "decide-reg")}</td></tr>`).join("");
+      bindTakeOver();
       document.querySelectorAll(".decide-reg").forEach(b => b.onclick = () => decideRequest("regularization", b.dataset.id, b.dataset.decision));
     }
     updateApprovalsBadge();

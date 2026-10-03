@@ -29,6 +29,8 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // Clean URL for the employee self-service portal — same server, separate page.
 app.get("/employee", (req, res) => res.sendFile(path.join(__dirname, "public", "employee.html")));
+// Hotel manager portal — same server, separate page; only works for accounts flagged as a hotel manager.
+app.get("/manager", (req, res) => res.sendFile(path.join(__dirname, "public", "manager.html")));
 
 // Gates every /api/* route below with a valid admin login, except the
 // employee self-service routes (their own separate login), the biometric
@@ -91,6 +93,9 @@ async function initDb() {
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_contact TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS last_increment_date DATE;`);
+  // A hotel head who can approve their own property's leave/regularization
+  // requests (first stage) from the manager portal. Not used for Corporate Office.
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_manager BOOLEAN DEFAULT false;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ifsc_code TEXT DEFAULT '';`);
@@ -148,6 +153,18 @@ async function initDb() {
       decision_note TEXT DEFAULT ''
     );
   `);
+
+  // Two-stage approval: a hotel manager approves first (manager_status),
+  // then HRMS gives the final decision (status). NULL or 'Not required' means
+  // the request skips the manager stage (Corporate staff, managers' own
+  // requests, hotels with no manager, and everything from before this existed).
+  // manager_status: Pending | Approved | Rejected | Skipped (HR took over)
+  for (const table of ["leave_requests", "regularization_requests"]) {
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS manager_status TEXT;`);
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS manager_id TEXT;`);
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS manager_decided_at TIMESTAMP;`);
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS manager_note TEXT DEFAULT '';`);
+  }
 
   // A running log of every salary change, so a gross-salary increase can
   // require — and keep a record of — a reason (promotion, annual
@@ -589,12 +606,21 @@ function resolveLastIncrementDate({ raised, submitted, shownDate, storedDate, to
   if (submitted !== undefined) return submitted;
   return storedDate || null;
 }
+// Corporate Office has no manager portal; its requests always go straight to HRMS.
+const CORPORATE_HOTEL_ID = "HQ";
+// Does a new request from this employee need a hotel manager's approval first?
+// Not for Corporate staff, not for managers themselves (they can't approve
+// their own), and not when the hotel has no active manager (it would never
+// be answered) — those all go straight to HRMS.
+function needsManagerStage(emp, hotelHasManager) {
+  return !!emp.hotel_id && emp.hotel_id !== CORPORATE_HOTEL_ID && !emp.is_manager && !!hotelHasManager;
+}
 // ==== PURE ENGINE END ====
 
 const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent", "half day", "on duty"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
   to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
-  department, emergency_contact, to_char(last_increment_date, 'YYYY-MM-DD') AS last_increment_date, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
+  department, emergency_contact, to_char(last_increment_date, 'YYYY-MM-DD') AS last_increment_date, is_manager, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
   to_char(last_working_day, 'YYYY-MM-DD') AS last_working_day, exit_reason, exit_note, ffs_amount, ffs_status`;
 
 async function getPayrollRates() {
@@ -1201,10 +1227,15 @@ app.post("/api/employees", async (req, res) => {
       lastInc = validPastDate(body.last_increment_date, todayIst());
       if (!lastInc) return res.status(400).json({ status: "error", message: "Last increment date must be a real date that isn't in the future." });
     }
+    const isManager = !!body.is_manager;
+    const newHotel = body.hotel_id ? String(body.hotel_id).trim() : "";
+    if (isManager && (!newHotel || newHotel === CORPORATE_HOTEL_ID)) {
+      return res.status(400).json({ status: "error", message: "A hotel manager must belong to a hotel — Corporate Office has no manager portal." });
+    }
     const r = await pool.query(
       `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
-         department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code, last_increment_date)
-       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+         department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code, last_increment_date, is_manager)
+       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
       [id, name, body.hotel_id ? String(body.hotel_id).trim() : "", body.role ? String(body.role).trim() : "",
        body.machine_user_id ? String(body.machine_user_id).trim() : "", salary, doj,
        body.property_code ? String(body.property_code).trim() : "",
@@ -1212,7 +1243,7 @@ app.post("/api/employees", async (req, res) => {
        body.emergency_contact ? String(body.emergency_contact).trim() : "",
        basicSalary, pfApplicable, esiApplicable,
        body.bank_name ? String(body.bank_name).trim() : "", body.bank_account_no ? String(body.bank_account_no).trim() : "",
-       body.ifsc_code ? String(body.ifsc_code).trim().toUpperCase() : "", lastInc]
+       body.ifsc_code ? String(body.ifsc_code).trim().toUpperCase() : "", lastInc, isManager]
     );
     res.json({ status: "success", employee: r.rows[0] });
   } catch (error) {
@@ -1266,6 +1297,11 @@ app.patch("/api/employees/:id", async (req, res) => {
     }
     const loggedRaise = await pool.query(
       "SELECT to_char(MAX(changed_at), 'YYYY-MM-DD') AS d FROM salary_increments WHERE employee_id = $1 AND new_salary > old_salary", [req.params.id]);
+    const editedHotel = body.hotel_id !== undefined ? String(body.hotel_id).trim() : current.hotel_id;
+    const isManager = body.is_manager !== undefined ? !!body.is_manager : !!current.is_manager;
+    if (isManager && (!editedHotel || editedHotel === CORPORATE_HOTEL_ID)) {
+      return res.status(400).json({ status: "error", message: "A hotel manager must belong to a hotel — Corporate Office has no manager portal. Untick \"Hotel manager\" first if you're moving them there." });
+    }
     const lastIncDate = resolveLastIncrementDate({
       raised: salary > currentSalary, submitted: submittedInc,
       shownDate: current.last_increment_str || loggedRaise.rows[0].d || null,
@@ -1274,7 +1310,7 @@ app.patch("/api/employees/:id", async (req, res) => {
     const r = await pool.query(
       `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9,
          department=$10, emergency_contact=$11, fixed_basic_salary=$12, pf_applicable=$13, esi_applicable=$14, bank_name=$15, bank_account_no=$16, ifsc_code=$17,
-         last_working_day=$18, exit_reason=$19, exit_note=$20, ffs_amount=$21, ffs_status=$22, last_increment_date=$23
+         last_working_day=$18, exit_reason=$19, exit_note=$20, ffs_amount=$21, ffs_status=$22, last_increment_date=$23, is_manager=$24
        WHERE id=$1 RETURNING *`,
       [
         req.params.id,
@@ -1296,7 +1332,7 @@ app.patch("/api/employees/:id", async (req, res) => {
         body.exit_note !== undefined ? String(body.exit_note).trim() : current.exit_note,
         ffsAmount,
         body.ffs_status !== undefined ? String(body.ffs_status).trim() : current.ffs_status,
-        lastIncDate
+        lastIncDate, isManager
       ]
     );
     if (salary !== currentSalary) {
@@ -2014,7 +2050,8 @@ app.get("/api/self/me", requireEmployeeAuth, async (req, res) => {
   const hotel = (await pool.query("SELECT name FROM hotels WHERE id = $1", [emp.hotel_id])).rows[0];
   res.json({ status: "success", employee: { id: emp.id, name: emp.name, role: emp.role, department: emp.department || "", hotel_id: emp.hotel_id,
     hotel_name: hotel ? hotel.name : "", date_of_joining: emp.date_of_joining,
-    payslips_enabled: (await getSetting("payslips_enabled", "false")) === "true" } });
+    payslips_enabled: (await getSetting("payslips_enabled", "false")) === "true",
+    is_manager: !!(emp.is_manager && emp.hotel_id && emp.hotel_id !== CORPORATE_HOTEL_ID && emp.status !== "Exited") } });
 });
 
 // Query param: month ("YYYY-MM"). Reuses the exact same engine the admin
@@ -2081,8 +2118,19 @@ app.get("/api/self/payslip", requireEmployeeAuth, async (req, res) => {
   }
 });
 
-// Submits a leave request. Doesn't touch attendance — sits as Pending
-// until HR approves it from the main dashboard.
+async function hotelHasActiveManager(hotelId) {
+  if (!hotelId) return false;
+  const r = await pool.query("SELECT 1 FROM employees WHERE hotel_id = $1 AND is_manager = true AND status <> 'Exited' LIMIT 1", [hotelId]);
+  return r.rows.length > 0;
+}
+// 'Pending' when a hotel manager must approve first, otherwise 'Not required'.
+async function initialManagerStatus(emp) {
+  return needsManagerStage(emp, await hotelHasActiveManager(emp.hotel_id)) ? "Pending" : "Not required";
+}
+
+// Submits a leave request. Doesn't touch attendance — goes to the employee's
+// hotel manager first (if their hotel has one), then to HRMS for the final
+// decision, which is the only step that changes attendance.
 app.post("/api/self/leave-requests", requireEmployeeAuth, async (req, res) => {
   try {
     const body = req.body || {};
@@ -2094,8 +2142,8 @@ app.post("/api/self/leave-requests", requireEmployeeAuth, async (req, res) => {
     const validType = leaveType === "Comp Off" || (await pool.query("SELECT 1 FROM leave_types WHERE name = $1", [leaveType])).rows.length;
     if (!validType) return res.status(400).json({ status: "error", message: `"${leaveType}" isn't a recognised leave type.` });
     const r = await pool.query(
-      `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, reason) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [req.employee.id, leaveType, start, end, reason]
+      `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, reason, manager_status) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [req.employee.id, leaveType, start, end, reason, await initialManagerStatus(req.employee)]
     );
     res.json({ status: "success", request: r.rows[0] });
   } catch (error) {
@@ -2105,7 +2153,7 @@ app.post("/api/self/leave-requests", requireEmployeeAuth, async (req, res) => {
 });
 
 app.get("/api/self/leave-requests", requireEmployeeAuth, async (req, res) => {
-  const r = await pool.query("SELECT * FROM leave_requests WHERE employee_id = $1 ORDER BY requested_at DESC", [req.employee.id]);
+  const r = await pool.query("SELECT lr.*, m.name AS manager_name FROM leave_requests lr LEFT JOIN employees m ON m.id = lr.manager_id WHERE lr.employee_id = $1 ORDER BY lr.requested_at DESC", [req.employee.id]);
   res.json({ status: "success", records: r.rows });
 });
 
@@ -2122,8 +2170,8 @@ app.post("/api/self/regularization", requireEmployeeAuth, async (req, res) => {
     if (!date) return res.status(400).json({ status: "error", message: "A date is required." });
     if (!reason) return res.status(400).json({ status: "error", message: "Please give a reason." });
     const r = await pool.query(
-      `INSERT INTO regularization_requests (employee_id, date, reason, requested_status) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [req.employee.id, date, reason, requestedStatus]
+      `INSERT INTO regularization_requests (employee_id, date, reason, requested_status, manager_status) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.employee.id, date, reason, requestedStatus, await initialManagerStatus(req.employee)]
     );
     res.json({ status: "success", request: r.rows[0] });
   } catch (error) {
@@ -2133,7 +2181,7 @@ app.post("/api/self/regularization", requireEmployeeAuth, async (req, res) => {
 });
 
 app.get("/api/self/regularization", requireEmployeeAuth, async (req, res) => {
-  const r = await pool.query("SELECT * FROM regularization_requests WHERE employee_id = $1 ORDER BY requested_at DESC", [req.employee.id]);
+  const r = await pool.query("SELECT rr.*, m.name AS manager_name FROM regularization_requests rr LEFT JOIN employees m ON m.id = rr.manager_id WHERE rr.employee_id = $1 ORDER BY rr.requested_at DESC", [req.employee.id]);
   res.json({ status: "success", records: r.rows });
 });
 
@@ -2141,16 +2189,26 @@ app.get("/api/self/regularization", requireEmployeeAuth, async (req, res) => {
 // HR/admin side of the above: the approval queue, and account controls.
 // ---------------------------------------------------------------------
 
-// Query param: status ("Pending" by default, or "all"). Joins in the
-// employee's name/hotel so the approval queue doesn't need a second call.
+// Which requests the HRMS approval queue shows for a given filter:
+//   "Pending"          — ready for HRMS: undecided AND not still waiting on a hotel manager
+//   "awaiting_manager" — undecided and waiting on the hotel manager
+//   "all"              — everything
+//   anything else      — matched against the final status (Approved / Rejected)
+function requestQueueFilter(alias, status) {
+  if (status === "all") return { where: "", params: [] };
+  if (status === "awaiting_manager") return { where: `WHERE ${alias}.status = 'Pending' AND ${alias}.manager_status = 'Pending'`, params: [] };
+  if (status === "Pending") return { where: `WHERE ${alias}.status = 'Pending' AND ${alias}.manager_status IS DISTINCT FROM 'Pending'`, params: [] };
+  return { where: `WHERE ${alias}.status = $1`, params: [status] };
+}
+
+// Query param: status ("Pending" by default, "awaiting_manager", or "all"). Joins in the
+// employee's name/hotel and the hotel manager's name so the queue doesn't need a second call.
 app.get("/api/leave-requests", async (req, res) => {
   try {
-    const status = req.query.status || "Pending";
-    const where = status === "all" ? "" : "WHERE lr.status = $1";
-    const params = status === "all" ? [] : [status];
+    const { where, params } = requestQueueFilter("lr", req.query.status || "Pending");
     const r = await pool.query(
-      `SELECT lr.*, e.name AS employee_name, e.hotel_id FROM leave_requests lr
-       JOIN employees e ON e.id = lr.employee_id ${where} ORDER BY lr.requested_at DESC`, params);
+      `SELECT lr.*, e.name AS employee_name, e.hotel_id, m.name AS manager_name FROM leave_requests lr
+       JOIN employees e ON e.id = lr.employee_id LEFT JOIN employees m ON m.id = lr.manager_id ${where} ORDER BY lr.requested_at DESC`, params);
     res.json({ status: "success", records: r.rows });
   } catch (error) {
     console.error("GET /api/leave-requests failed:", error);
@@ -2197,6 +2255,7 @@ app.post("/api/leave-requests/:id/decide", async (req, res) => {
     if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Request not found." });
     const lr = existing.rows[0];
     if (lr.status !== "Pending") return res.status(409).json({ status: "error", message: `This request was already ${lr.status.toLowerCase()}.` });
+    if (lr.manager_status === "Pending") return res.status(409).json({ status: "error", message: "This request is still waiting for the hotel manager. Use Take over if you need to decide it yourself." });
     let autoNote = "";
     if (decision === "Approved") {
       const dates = [];
@@ -2250,12 +2309,10 @@ app.post("/api/leave-requests/:id/decide", async (req, res) => {
 
 app.get("/api/regularization-requests", async (req, res) => {
   try {
-    const status = req.query.status || "Pending";
-    const where = status === "all" ? "" : "WHERE rr.status = $1";
-    const params = status === "all" ? [] : [status];
+    const { where, params } = requestQueueFilter("rr", req.query.status || "Pending");
     const r = await pool.query(
-      `SELECT rr.*, e.name AS employee_name, e.hotel_id FROM regularization_requests rr
-       JOIN employees e ON e.id = rr.employee_id ${where} ORDER BY rr.requested_at DESC`, params);
+      `SELECT rr.*, e.name AS employee_name, e.hotel_id, m.name AS manager_name FROM regularization_requests rr
+       JOIN employees e ON e.id = rr.employee_id LEFT JOIN employees m ON m.id = rr.manager_id ${where} ORDER BY rr.requested_at DESC`, params);
     res.json({ status: "success", records: r.rows });
   } catch (error) {
     console.error("GET /api/regularization-requests failed:", error);
@@ -2275,6 +2332,7 @@ app.post("/api/regularization-requests/:id/decide", async (req, res) => {
     if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Request not found." });
     const rr = existing.rows[0];
     if (rr.status !== "Pending") return res.status(409).json({ status: "error", message: `This request was already ${rr.status.toLowerCase()}.` });
+    if (rr.manager_status === "Pending") return res.status(409).json({ status: "error", message: "This request is still waiting for the hotel manager. Use Take over if you need to decide it yourself." });
     if (decision === "Approved") {
       const statusToApply = req.body.status_to_apply ? String(req.body.status_to_apply).trim() : rr.requested_status;
       await pool.query(
@@ -2290,6 +2348,122 @@ app.post("/api/regularization-requests/:id/decide", async (req, res) => {
     res.json({ status: "success", request: r.rows[0] });
   } catch (error) {
     console.error("POST /api/regularization-requests/:id/decide failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// HRMS taking a request over from a hotel manager who hasn't answered (on
+// leave, left the company, ...) — it then appears in the normal queue.
+async function hrTakeOver(table, req, res) {
+  try {
+    const r = await pool.query(
+      `UPDATE ${table} SET manager_status = 'Skipped', manager_note = 'HR took over' WHERE id = $1 AND status = 'Pending' AND manager_status = 'Pending' RETURNING id`,
+      [req.params.id]);
+    if (!r.rows.length) return res.status(409).json({ status: "error", message: "Nothing to take over — this request isn't waiting on a hotel manager." });
+    res.json({ status: "success" });
+  } catch (error) {
+    console.error("take-over failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+}
+app.post("/api/leave-requests/:id/take-over", (req, res) => hrTakeOver("leave_requests", req, res));
+app.post("/api/regularization-requests/:id/take-over", (req, res) => hrTakeOver("regularization_requests", req, res));
+
+// ---------------------------------------------------------------------
+// Hotel manager portal (/manager). A hotel head — an employee flagged
+// is_manager — signs in with their own Employee ID and password (the same
+// login as the employee portal) and can:
+//   - approve or reject their own property's leave / regularization
+//     requests (first stage; approved ones go on to HRMS for the final say)
+//   - SEE their property's attendance. There is deliberately no endpoint
+//     here that changes attendance — only HRMS approval does that.
+// Everything is scoped to the manager's OWN hotel, taken from their record,
+// never from anything the browser sends.
+// ---------------------------------------------------------------------
+function requireManagerAuth(req, res, next) {
+  const e = req.employee;
+  if (!e || !e.is_manager || e.status === "Exited" || !e.hotel_id || e.hotel_id === CORPORATE_HOTEL_ID) {
+    return res.status(403).json({ status: "error", message: "This account doesn't have manager access." });
+  }
+  next();
+}
+
+app.get("/api/self/manager/me", requireEmployeeAuth, requireManagerAuth, async (req, res) => {
+  try {
+    const m = req.employee;
+    const hotel = (await pool.query("SELECT name FROM hotels WHERE id = $1", [m.hotel_id])).rows[0];
+    const count = async table => (await pool.query(
+      `SELECT COUNT(*)::int AS n FROM ${table} t JOIN employees e ON e.id = t.employee_id WHERE e.hotel_id = $1 AND t.status = 'Pending' AND t.manager_status = 'Pending'`,
+      [m.hotel_id])).rows[0].n;
+    res.json({ status: "success",
+      manager: { id: m.id, name: m.name, role: m.role, hotel_id: m.hotel_id, hotel_name: hotel ? hotel.name : "" },
+      pending: { leave: await count("leave_requests"), regularization: await count("regularization_requests") } });
+  } catch (error) {
+    console.error("GET /api/self/manager/me failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// Query param: filter ("pending" by default, or "all" for history).
+async function managerRequestList(table, req, res) {
+  try {
+    const r = await pool.query(
+      `SELECT t.*, e.name AS employee_name, m.name AS manager_name FROM ${table} t
+       JOIN employees e ON e.id = t.employee_id LEFT JOIN employees m ON m.id = t.manager_id
+       WHERE e.hotel_id = $1 AND t.manager_status IS NOT NULL AND t.manager_status <> 'Not required'
+       ORDER BY t.requested_at DESC LIMIT 300`, [req.employee.hotel_id]);
+    const rows = req.query.filter === "all" ? r.rows : r.rows.filter(x => x.manager_status === "Pending" && x.status === "Pending");
+    res.json({ status: "success", records: rows });
+  } catch (error) {
+    console.error("manager request list failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+}
+app.get("/api/self/manager/leave-requests", requireEmployeeAuth, requireManagerAuth, (req, res) => managerRequestList("leave_requests", req, res));
+app.get("/api/self/manager/regularization-requests", requireEmployeeAuth, requireManagerAuth, (req, res) => managerRequestList("regularization_requests", req, res));
+
+// Body: { decision: "Approved" | "Rejected", note }. Approving only passes the
+// request on to HRMS — it changes nothing in attendance. Rejecting ends it.
+async function managerDecide(table, req, res) {
+  try {
+    const mgr = req.employee;
+    const decision = req.body && req.body.decision;
+    if (!["Approved", "Rejected"].includes(decision)) return res.status(400).json({ status: "error", message: "decision must be Approved or Rejected." });
+    const note = req.body.note ? String(req.body.note).trim() : "";
+    const found = await pool.query(
+      `SELECT t.*, e.hotel_id AS employee_hotel_id FROM ${table} t JOIN employees e ON e.id = t.employee_id WHERE t.id = $1`, [req.params.id]);
+    const row = found.rows[0];
+    // Another hotel's request is reported as "not found" so a manager can't probe other properties.
+    if (!row || row.employee_hotel_id !== mgr.hotel_id) return res.status(404).json({ status: "error", message: "Request not found." });
+    if (row.employee_id === mgr.id) return res.status(403).json({ status: "error", message: "You can't approve your own request." });
+    if (row.status !== "Pending" || row.manager_status !== "Pending") return res.status(409).json({ status: "error", message: "This request has already been handled." });
+    const done = decision === "Approved"
+      ? await pool.query(`UPDATE ${table} SET manager_status = 'Approved', manager_id = $2, manager_decided_at = now(), manager_note = $3
+                          WHERE id = $1 AND manager_status = 'Pending' RETURNING id`, [req.params.id, mgr.id, note])
+      : await pool.query(`UPDATE ${table} SET manager_status = 'Rejected', manager_id = $2, manager_decided_at = now(), manager_note = $3,
+                            status = 'Rejected', decided_at = now(), decision_note = $4
+                          WHERE id = $1 AND manager_status = 'Pending' RETURNING id`,
+                         [req.params.id, mgr.id, note, `Rejected by hotel manager ${mgr.name}${note ? ": " + note : ""}`]);
+    // Guards against HRMS taking the request over a split second earlier.
+    if (!done.rows.length) return res.status(409).json({ status: "error", message: "This request has already been handled." });
+    res.json({ status: "success", decision, next: decision === "Approved" ? "sent_to_hrms" : "closed" });
+  } catch (error) {
+    console.error("manager decide failed:", error);
+    res.status(500).json({ status: "error", message: error.message });
+  }
+}
+app.post("/api/self/manager/leave-requests/:id/decide", requireEmployeeAuth, requireManagerAuth, (req, res) => managerDecide("leave_requests", req, res));
+app.post("/api/self/manager/regularization-requests/:id/decide", requireEmployeeAuth, requireManagerAuth, (req, res) => managerDecide("regularization_requests", req, res));
+
+// View-only attendance for the manager's own property. Same figures as the
+// HRMS Attendance Register, with no way to edit them from here.
+app.get("/api/self/manager/attendance", requireEmployeeAuth, requireManagerAuth, async (req, res) => {
+  try {
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(req.query.month || "") ? req.query.month : todayIst().slice(0, 7);
+    const records = await computeAttendance(req.employee.hotel_id, month);
+    res.json({ status: "success", month, hotel_id: req.employee.hotel_id, records });
+  } catch (error) {
+    console.error("GET /api/self/manager/attendance failed:", error);
     res.status(500).json({ status: "error", message: error.message });
   }
 });

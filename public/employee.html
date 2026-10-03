@@ -109,6 +109,7 @@
           <p id="app-emp-name" class="text-lg font-extrabold truncate">—</p>
           <p id="app-emp-role" class="text-xs truncate" style="color:#B9CFCE"></p>
           <p id="app-emp-hotel" class="text-xs truncate" style="color:#B9CFCE">—</p>
+          <a id="manager-link" href="/manager" class="hidden mt-1 text-xs font-bold underline" style="color:#FFA800">Open manager portal →</a>
         </div>
         <div class="flex flex-shrink-0 gap-2">
           <button id="open-change-password" class="grid h-9 w-9 place-items-center rounded-full" style="background:rgba(255,255,255,.14)" title="Change password">
@@ -311,6 +312,7 @@ function enterApp() {
   // button is just tidiness, not the actual protection.
   const payBtn = document.querySelector('[data-tab="payslip"]');
   if (payBtn) payBtn.style.display = state.employee.payslips_enabled ? "" : "none";
+  $("manager-link").classList.toggle("hidden", !state.employee.is_manager);
   showScreen("screen-app");
   switchTab("attendance");
 }
@@ -399,13 +401,25 @@ async function loadLeaves() {
     await loadLeaveRequests();
   } catch (e) { toast(e.message); }
 }
+// Where a request is, in plain words: with the hotel manager, with HR, or decided.
+function stagePill(r) {
+  let label = "With HR", style = "background:#FBF0DC;color:#8A5B00";
+  if (r.status === "Approved") { label = "Approved"; style = "background:#E4F3EC;color:#0F6B3E"; }
+  else if (r.status === "Rejected") { label = "Rejected"; style = "background:#FDE8E8;color:#B42318"; }
+  else if (r.manager_status === "Pending") { label = "With your hotel manager"; style = "background:#E6F0FA;color:#1B5E9B"; }
+  else if (r.manager_status === "Approved") { label = "Manager approved · with HR"; }
+  return `<span class="pill" style="${style}">${label}</span>`;
+}
+function managerNote(r) {
+  return r.manager_status === "Approved" && r.manager_note ? `<p class="text-xs text-slate-400 mt-1">Manager${r.manager_name ? " " + esc(r.manager_name) : ""}: ${esc(r.manager_note)}</p>` : "";
+}
 async function loadLeaveRequests() {
   const d = await api("/api/self/leave-requests");
   const rows = d.records || [];
   $("leave-requests-empty").classList.toggle("hidden", rows.length > 0);
-  $("leave-requests-list").innerHTML = rows.map(r => `<div class="card p-3.5"><div class="flex items-center justify-between"><p class="font-bold text-sm">${esc(r.leave_type)}</p><span class="pill" style="${r.status === "Approved" ? "background:#E4F3EC;color:#0F6B3E" : r.status === "Rejected" ? "background:#FDE8E8;color:#B42318" : "background:#FBF0DC;color:#8A5B00"}">${esc(r.status)}</span></div>
-    <p class="text-xs text-slate-500 mt-1">${r.start_date} → ${r.end_date}${r.reason ? " · " + esc(r.reason) : ""}</p>
-    ${r.decision_note ? `<p class="text-xs text-slate-400 mt-1">HR note: ${esc(r.decision_note)}</p>` : ""}</div>`).join("");
+  $("leave-requests-list").innerHTML = rows.map(r => `<div class="card p-3.5"><div class="flex items-center justify-between"><p class="font-bold text-sm">${esc(r.leave_type)}</p>${stagePill(r)}</div>
+    <p class="text-xs text-slate-500 mt-1">${String(r.start_date).slice(0, 10)} → ${String(r.end_date).slice(0, 10)}${r.reason ? " · " + esc(r.reason) : ""}</p>
+    ${managerNote(r)}${r.decision_note ? `<p class="text-xs text-slate-400 mt-1">Note: ${esc(r.decision_note)}</p>` : ""}</div>`).join("");
 }
 $("open-apply-leave").onclick = () => { $("apply-leave-panel").classList.remove("hidden"); $("leave-start").value = $("leave-end").value = new Date().toISOString().slice(0, 10); };
 $("cancel-apply-leave").onclick = () => { $("apply-leave-panel").classList.add("hidden"); $("apply-leave-form").reset(); $("leave-error").classList.add("hidden"); };
@@ -431,9 +445,9 @@ async function loadRegularization() {
     const d = await api("/api/self/regularization");
     const rows = d.records || [];
     $("reg-requests-empty").classList.toggle("hidden", rows.length > 0);
-    $("reg-requests-list").innerHTML = rows.map(r => `<div class="card p-3.5"><div class="flex items-center justify-between"><p class="font-bold text-sm">${r.date} → ${esc(r.requested_status)}</p><span class="pill" style="${r.status === "Approved" ? "background:#E4F3EC;color:#0F6B3E" : r.status === "Rejected" ? "background:#FDE8E8;color:#B42318" : "background:#FBF0DC;color:#8A5B00"}">${esc(r.status)}</span></div>
+    $("reg-requests-list").innerHTML = rows.map(r => `<div class="card p-3.5"><div class="flex items-center justify-between"><p class="font-bold text-sm">${String(r.date).slice(0, 10)} → ${esc(r.requested_status)}</p>${stagePill(r)}</div>
       <p class="text-xs text-slate-500 mt-1">${esc(r.reason)}</p>
-      ${r.decision_note ? `<p class="text-xs text-slate-400 mt-1">HR note: ${esc(r.decision_note)}</p>` : ""}</div>`).join("");
+      ${managerNote(r)}${r.decision_note ? `<p class="text-xs text-slate-400 mt-1">Note: ${esc(r.decision_note)}</p>` : ""}</div>`).join("");
   } catch (e) { toast(e.message); }
 }
 $("open-new-reg").onclick = () => openRegForm();
