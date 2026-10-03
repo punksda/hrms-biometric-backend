@@ -90,6 +90,7 @@ async function initDb() {
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS esi_applicable BOOLEAN DEFAULT true;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS department TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS emergency_contact TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS last_increment_date DATE;`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS ifsc_code TEXT DEFAULT '';`);
@@ -564,12 +565,36 @@ function ptForSlab(grossP, slabs) {
   for (const s of slabs) { if (s.upto === null || grossP <= s.upto) return s.amount; }
   return 0;
 }
+// A real calendar date, not in the future — used for "last increment date".
+// Returns the normalised YYYY-MM-DD string, or null if it isn't valid.
+function validPastDate(value, today) {
+  // Only an unambiguous YYYY-MM-DD is accepted. Anything like 01/04/2026 is
+  // refused rather than guessed at: JavaScript would read it as January 4th,
+  // while in India it means 1 April.
+  const m = String(value == null ? "" : value).trim().match(/^(\d{4}-\d{2}-\d{2})(?:$|T)/);
+  if (!m) return null;
+  const d = m[1];
+  const dt = new Date(d + "T00:00:00Z");
+  if (isNaN(dt) || dt.toISOString().slice(0, 10) !== d) return null; // e.g. 2026-02-31 or month 13
+  if (today && d > today) return null;
+  return d;
+}
+// What "last increment date" should be after an edit.
+//  - A salary RAISE is being recorded right now: use today, unless the person
+//    typed a different date (e.g. a raise effective from earlier this month).
+//  - Otherwise: keep whatever date is stored, unless they changed it.
+// shownDate is what the form displayed (stored value, or the latest logged raise).
+function resolveLastIncrementDate({ raised, submitted, shownDate, storedDate, today }) {
+  if (raised) return submitted && submitted !== shownDate ? submitted : today;
+  if (submitted !== undefined) return submitted;
+  return storedDate || null;
+}
 // ==== PURE ENGINE END ====
 
 const RESERVED_STATUSES = ["present", "present (incomplete)", "present (worked weekly off)", "weekly off", "comp off", "absent", "half day", "on duty"];
 const EMPLOYEE_COLS = `id, name, hotel_id, role, status, machine_user_id, monthly_salary,
   to_char(date_of_joining, 'YYYY-MM-DD') AS date_of_joining, property_code,
-  department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
+  department, emergency_contact, to_char(last_increment_date, 'YYYY-MM-DD') AS last_increment_date, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code,
   to_char(last_working_day, 'YYYY-MM-DD') AS last_working_day, exit_reason, exit_note, ffs_amount, ffs_status`;
 
 async function getPayrollRates() {
@@ -1135,9 +1160,13 @@ app.get("/api/employees", async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT ${EMPLOYEE_COLS},
-         (SELECT to_char(MAX(changed_at), 'YYYY-MM-DD') FROM salary_increments si WHERE si.employee_id = employees.id) AS last_increment_date
+         (SELECT to_char(MAX(changed_at), 'YYYY-MM-DD') FROM salary_increments si
+            WHERE si.employee_id = employees.id AND si.new_salary > si.old_salary) AS logged_increment_date
        FROM employees ORDER BY id`
     );
+    // A date typed in by HR wins; otherwise fall back to the latest logged raise
+    // (raises only — a pay cut or correction isn't an "increment").
+    r.rows.forEach(row => { row.last_increment_date = row.last_increment_date || row.logged_increment_date || null; delete row.logged_increment_date; });
     res.json({ status: "success", records: r.rows });
   } catch (error) {
     console.error("GET /api/employees failed:", error);
@@ -1167,10 +1196,15 @@ app.post("/api/employees", async (req, res) => {
     const pfApplicable = body.pf_applicable === undefined ? true : !!body.pf_applicable;
     const esiApplicable = body.esi_applicable === undefined ? true : !!body.esi_applicable;
     const doj = ymd(body.date_of_joining);
+    let lastInc = null;
+    if (body.last_increment_date) {
+      lastInc = validPastDate(body.last_increment_date, todayIst());
+      if (!lastInc) return res.status(400).json({ status: "error", message: "Last increment date must be a real date that isn't in the future." });
+    }
     const r = await pool.query(
       `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
-         department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
-       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+         department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code, last_increment_date)
+       VALUES ($1,$2,$3,$4,'Active',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
       [id, name, body.hotel_id ? String(body.hotel_id).trim() : "", body.role ? String(body.role).trim() : "",
        body.machine_user_id ? String(body.machine_user_id).trim() : "", salary, doj,
        body.property_code ? String(body.property_code).trim() : "",
@@ -1178,7 +1212,7 @@ app.post("/api/employees", async (req, res) => {
        body.emergency_contact ? String(body.emergency_contact).trim() : "",
        basicSalary, pfApplicable, esiApplicable,
        body.bank_name ? String(body.bank_name).trim() : "", body.bank_account_no ? String(body.bank_account_no).trim() : "",
-       body.ifsc_code ? String(body.ifsc_code).trim().toUpperCase() : ""]
+       body.ifsc_code ? String(body.ifsc_code).trim().toUpperCase() : "", lastInc]
     );
     res.json({ status: "success", employee: r.rows[0] });
   } catch (error) {
@@ -1205,7 +1239,7 @@ app.post("/api/employees", async (req, res) => {
 app.patch("/api/employees/:id", async (req, res) => {
   try {
     const body = req.body || {};
-    const existing = await pool.query("SELECT * FROM employees WHERE id = $1", [req.params.id]);
+    const existing = await pool.query("SELECT *, to_char(last_increment_date, 'YYYY-MM-DD') AS last_increment_str FROM employees WHERE id = $1", [req.params.id]);
     if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Employee not found" });
     const current = existing.rows[0];
     const salary = body.monthly_salary !== undefined && !isNaN(Number(body.monthly_salary)) ? Number(body.monthly_salary) : Number(current.monthly_salary);
@@ -1219,10 +1253,28 @@ app.patch("/api/employees/:id", async (req, res) => {
     const doj = body.date_of_joining !== undefined ? ymd(body.date_of_joining) : current.date_of_joining;
     const lwd = body.last_working_day !== undefined ? ymd(body.last_working_day) : current.last_working_day;
     const ffsAmount = body.ffs_amount !== undefined ? (body.ffs_amount === null || body.ffs_amount === "" ? null : Number(body.ffs_amount)) : current.ffs_amount;
+
+    // Last increment date: HR can type it in (e.g. for raises from before this
+    // system), and recording a raise here sets it automatically.
+    let submittedInc;
+    if (body.last_increment_date !== undefined) {
+      if (body.last_increment_date === null || body.last_increment_date === "") submittedInc = null;
+      else {
+        submittedInc = validPastDate(body.last_increment_date, todayIst());
+        if (!submittedInc) return res.status(400).json({ status: "error", message: "Last increment date must be a real date that isn't in the future." });
+      }
+    }
+    const loggedRaise = await pool.query(
+      "SELECT to_char(MAX(changed_at), 'YYYY-MM-DD') AS d FROM salary_increments WHERE employee_id = $1 AND new_salary > old_salary", [req.params.id]);
+    const lastIncDate = resolveLastIncrementDate({
+      raised: salary > currentSalary, submitted: submittedInc,
+      shownDate: current.last_increment_str || loggedRaise.rows[0].d || null,
+      storedDate: current.last_increment_str, today: todayIst()
+    });
     const r = await pool.query(
       `UPDATE employees SET name=$2, hotel_id=$3, role=$4, machine_user_id=$5, monthly_salary=$6, date_of_joining=$7, status=$8, property_code=$9,
          department=$10, emergency_contact=$11, fixed_basic_salary=$12, pf_applicable=$13, esi_applicable=$14, bank_name=$15, bank_account_no=$16, ifsc_code=$17,
-         last_working_day=$18, exit_reason=$19, exit_note=$20, ffs_amount=$21, ffs_status=$22
+         last_working_day=$18, exit_reason=$19, exit_note=$20, ffs_amount=$21, ffs_status=$22, last_increment_date=$23
        WHERE id=$1 RETURNING *`,
       [
         req.params.id,
@@ -1243,7 +1295,8 @@ app.patch("/api/employees/:id", async (req, res) => {
         body.exit_reason !== undefined ? String(body.exit_reason).trim() : current.exit_reason,
         body.exit_note !== undefined ? String(body.exit_note).trim() : current.exit_note,
         ffsAmount,
-        body.ffs_status !== undefined ? String(body.ffs_status).trim() : current.ffs_status
+        body.ffs_status !== undefined ? String(body.ffs_status).trim() : current.ffs_status,
+        lastIncDate
       ]
     );
     if (salary !== currentSalary) {
@@ -1358,10 +1411,17 @@ app.post("/api/employees/import", async (req, res) => {
       hotelLookup.set(String(h.id).toLowerCase(), h.id);
       hotelLookup.set(String(h.name).trim().toLowerCase(), h.id);
     });
-    let created = 0, updated = 0, skipped = 0;
+    let created = 0, updated = 0, skipped = 0, badIncDates = 0;
+    const importToday = todayIst();
     for (const row of rows) {
       const employee_id = row.employee_id && String(row.employee_id).trim();
       if (!employee_id) { skipped++; continue; }
+      // A blank cell leaves any existing date alone; a bad one is ignored and counted.
+      let lastInc = null;
+      if (row.last_increment_date) {
+        lastInc = validPastDate(row.last_increment_date, importToday);
+        if (!lastInc) badIncDates++;
+      }
       const salary = row.monthly_salary !== undefined && row.monthly_salary !== "" && !isNaN(Number(row.monthly_salary))
         ? Number(row.monthly_salary) : null;
       const basicSalary = row.fixed_basic_salary !== undefined && row.fixed_basic_salary !== "" && !isNaN(Number(row.fixed_basic_salary))
@@ -1394,26 +1454,27 @@ app.post("/api/employees/import", async (req, res) => {
              esi_applicable = COALESCE($14, esi_applicable),
              bank_name = COALESCE(NULLIF($15, ''), bank_name),
              bank_account_no = COALESCE(NULLIF($16, ''), bank_account_no),
-             ifsc_code = COALESCE(NULLIF($17, ''), ifsc_code)
+             ifsc_code = COALESCE(NULLIF($17, ''), ifsc_code),
+             last_increment_date = COALESCE($18::date, last_increment_date)
            WHERE id = $1`,
           [employee_id, row.name || "", row.machine_user_id || "", resolvedHotelId, row.role || "", row.status || "", salary, doj, row.property_code || "",
-           row.department || "", row.emergency_contact || "", basicSalary, pfApplicable, esiApplicable, row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
+           row.department || "", row.emergency_contact || "", basicSalary, pfApplicable, esiApplicable, row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase(), lastInc]
         );
         updated++;
       } else {
         await pool.query(
           `INSERT INTO employees (id, name, hotel_id, role, status, machine_user_id, monthly_salary, date_of_joining, property_code,
-             department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+             department, emergency_contact, fixed_basic_salary, pf_applicable, esi_applicable, bank_name, bank_account_no, ifsc_code, last_increment_date)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
           [employee_id, row.name || "", resolvedHotelId, row.role || "", row.status || "Active", row.machine_user_id || "", salary || 0, doj, row.property_code || "",
            row.department || "", row.emergency_contact || "", basicSalary || 0, pfApplicable === null ? true : pfApplicable, esiApplicable === null ? true : esiApplicable,
-           row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase()]
+           row.bank_name || "", row.bank_account_no || "", (row.ifsc_code || "").toUpperCase(), lastInc]
         );
         created++;
       }
     }
     const total = await pool.query("SELECT COUNT(*) FROM employees");
-    res.json({ status: "success", created, updated, skipped, total_employees: Number(total.rows[0].count) });
+    res.json({ status: "success", created, updated, skipped, bad_increment_dates: badIncDates, total_employees: Number(total.rows[0].count) });
   } catch (error) {
     console.error("POST /api/employees/import failed:", error);
     res.status(500).json({ status: "error", message: error.message });
@@ -1463,6 +1524,7 @@ app.post("/api/employees/:id/salary", async (req, res) => {
         `INSERT INTO salary_increments (employee_id, old_salary, new_salary, reason) VALUES ($1,$2,$3,$4)`,
         [req.params.id, currentSalary, salary, reason || "Salary revised"]
       );
+      if (salary > currentSalary) await pool.query("UPDATE employees SET last_increment_date = $1 WHERE id = $2", [todayIst(), req.params.id]);
     }
     res.json({ status: "success", employee: r.rows[0] });
   } catch (error) {

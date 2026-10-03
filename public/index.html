@@ -212,6 +212,7 @@
               <div><label class="mb-1 block text-sm font-semibold">Department</label><input id="new-emp-department" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. Housekeeping"></div>
               <div><label class="mb-1 block text-sm font-semibold">Emergency Contact No.</label><input id="new-emp-emergency-contact" inputmode="tel" class="w-full rounded-lg border p-2.5 text-sm" placeholder="e.g. 98765 43210"></div>
               <div><label class="mb-1 block text-sm font-semibold">Date of Joining</label><input id="new-emp-doj" type="date" class="w-full rounded-lg border p-2.5 text-sm"></div>
+              <div><label class="mb-1 block text-sm font-semibold">Last Increment Date <span class="font-normal text-slate-500">(optional)</span></label><input id="new-emp-last-increment" type="date" class="w-full rounded-lg border p-2.5 text-sm"><p class="mt-1 text-[11px] text-slate-500">For raises from before this system. Recording a raise here fills it in automatically.</p></div>
               <div><label class="mb-1 block text-sm font-semibold">Card No / Device User ID <span class="font-normal text-slate-500">(numbers only — the biometric machine's own ID)</span></label><input id="new-emp-card" inputmode="numeric" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div><label class="mb-1 block text-sm font-semibold">Property Identifier <span class="font-normal text-slate-500">(optional label, e.g. VCOR001)</span></label><input id="new-emp-property-code" class="w-full rounded-lg border p-2.5 text-sm"></div>
               <div class="md:col-span-3 mt-1 border-t border-amber-200 pt-3 text-xs font-bold uppercase tracking-wide text-[#003126]">Salary</div>
@@ -780,7 +781,7 @@ function openEditEmployee(id) {
   toggleAddEmployeeForm(true);
   $("new-emp-editing-id").value = r.id; $("new-emp-id").value = r.id; $("new-emp-id").disabled = true; // code can't change once created
   $("new-emp-name").value = r.name || ""; $("new-emp-hotel").value = r.hotel_id || ""; $("new-emp-role").value = r.role || "";
-  $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || ""; $("new-emp-department").value = r.department || ""; $("new-emp-emergency-contact").value = r.emergency_contact || "";
+  $("new-emp-doj").value = r.date_of_joining || ""; $("new-emp-card").value = r.machine_user_id || ""; $("new-emp-property-code").value = r.property_code || ""; $("new-emp-department").value = r.department || ""; $("new-emp-emergency-contact").value = r.emergency_contact || ""; $("new-emp-last-increment").value = r.last_increment_date || "";
   $("new-emp-salary").value = r.monthly_salary || 0; $("new-emp-salary").dataset.original = Number(r.monthly_salary) || 0;
   $("new-emp-basic").value = r.fixed_basic_salary || 0; $("new-emp-pf").checked = !!r.pf_applicable; $("new-emp-esi").checked = !!r.esi_applicable;
   $("new-emp-bank-name").value = r.bank_name || ""; $("new-emp-bank-account").value = r.bank_account_no || ""; $("new-emp-ifsc").value = r.ifsc_code || "";
@@ -805,7 +806,7 @@ async function addEmployee(ev) {
   const incrementReason = $("new-emp-increment-reason").value;
   if (increasing && !incrementReason) { err.textContent = "Please select a reason for the salary increase."; err.classList.remove("hidden"); return; }
   err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Saving…";
-  const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(), department: $("new-emp-department").value.trim(), emergency_contact: $("new-emp-emergency-contact").value.trim(),
+  const payload = { name, hotel_id: $("new-emp-hotel").value, role: $("new-emp-role").value.trim(), department: $("new-emp-department").value.trim(), emergency_contact: $("new-emp-emergency-contact").value.trim(), last_increment_date: $("new-emp-last-increment").value || "",
     monthly_salary: salary, fixed_basic_salary: $("new-emp-basic").value || 0,
     pf_applicable: $("new-emp-pf").checked, esi_applicable: $("new-emp-esi").checked,
     date_of_joining: $("new-emp-doj").value || null, machine_user_id: cardNo, property_code: $("new-emp-property-code").value.trim(),
@@ -848,7 +849,7 @@ async function deleteAllEmployees() {
 }
 function downloadEmployeeTemplate() {
   downloadCsv([{ EmpName: "Asha Rao", Cardno: "00000123", EmpCode: "VCOR045", Desig_Name: "Front Desk Executive", Dept_Name: "Front Office", Branch: "Hotel Alpine Abode Continental",
-    "Date of Joining": "2026-01-15", "Property ID": "VCOR045", "Emergency Contact": "9876543210",
+    "Date of Joining": "2026-01-15", "Last Increment Date": "2026-04-01", "Property ID": "VCOR045", "Emergency Contact": "9876543210",
     "Gross Salary": "12000", "Fixed Basic Salary": "10558", "PF Applicable": "Yes", "ESI Applicable": "Yes",
     "Bank Name": "State Bank of India", "Bank Account No.": "000000000000", "IFSC Code": "SBIN0001234" }], "employee-import-template.csv");
 }
@@ -858,17 +859,20 @@ async function importEmployees(file) {
     const c = {
       id: findCol(fields, ["empcode", "employeecode", "employeeid", "empid", "id"]), name: findCol(fields, NAME_ALIASES),
       card: findCol(fields, ["cardno", "cardnumber", "deviceuserid", "machineuserid", "userid"]),
-      role: findCol(fields, ["designame", "designation", "role", "position"]), department: findCol(fields, ["deptname", "department", "dept"]), emergencyContact: findCol(fields, ["emergencycontact", "emergencycontactno", "emergencynumber"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
+      role: findCol(fields, ["designame", "designation", "role", "position"]), department: findCol(fields, ["deptname", "department", "dept"]), emergencyContact: findCol(fields, ["emergencycontact", "emergencycontactno", "emergencynumber"]), lastInc: findCol(fields, ["lastincrementdate", "lastincrement", "lastincrementon"]), hotel: findCol(fields, ["branch", "hotel", "hotelname"]),
       salary: findCol(fields, ["grosssalary", "monthlysalary", "salary"]), basic: findCol(fields, ["fixedbasicsalary", "basicsalary", "basic"]),
       pf: findCol(fields, ["pfapplicable", "pf"]), esi: findCol(fields, ["esiapplicable", "esi"]),
       doj: findCol(fields, ["dateofjoining", "doj", "joiningdate"]), prop: findCol(fields, ["propertyid", "propertycode"]),
       bankName: findCol(fields, ["bankname"]), bankAcct: findCol(fields, ["bankaccountno", "bankaccountnumber", "accountno"]), ifsc: findCol(fields, ["ifsccode", "ifsc"]) };
     if (!c.id || !c.name) throw new Error("The CSV needs at least an EmpCode and an EmpName column. Use “Download Template” for the layout.");
     const bad = c.card ? data.filter(r => r[c.card] && !/^\d+$/.test(r[c.card])).length : 0;
+    // Dates are converted here (day-first, as written in India) so the server only ever sees an unambiguous YYYY-MM-DD.
+    const incIso = v => (v && headerToIsoDate(v, new Date().getFullYear())) || "";
+    const badIncClient = c.lastInc ? data.filter(r => r[c.id] && r[c.lastInc] && !incIso(r[c.lastInc])).length : 0;
     const rows = data.filter(r => r[c.id]).map(r => ({
       employee_id: r[c.id], name: r[c.name],
       machine_user_id: c.card && /^\d+$/.test(r[c.card] || "") ? r[c.card] : "",
-      role: c.role ? r[c.role] : "", department: c.department ? r[c.department] : "", emergency_contact: c.emergencyContact ? r[c.emergencyContact] : "", hotel_id: c.hotel ? r[c.hotel] : "",
+      role: c.role ? r[c.role] : "", department: c.department ? r[c.department] : "", emergency_contact: c.emergencyContact ? r[c.emergencyContact] : "", last_increment_date: c.lastInc ? incIso(r[c.lastInc]) : "", hotel_id: c.hotel ? r[c.hotel] : "",
       monthly_salary: c.salary ? r[c.salary].replace(/,/g, "") : undefined, date_of_joining: c.doj ? headerToIsoDate(r[c.doj], new Date().getFullYear()) || r[c.doj] : undefined,
       property_code: c.prop ? r[c.prop] : undefined,
       fixed_basic_salary: c.basic ? r[c.basic].replace(/,/g, "") : undefined,
@@ -876,7 +880,8 @@ async function importEmployees(file) {
       bank_name: c.bankName ? r[c.bankName] : undefined, bank_account_no: c.bankAcct ? r[c.bankAcct] : undefined, ifsc_code: c.ifsc ? r[c.ifsc] : undefined }));
     if (!rows.length) throw new Error("No employee rows found in that file.");
     const r = await request("/api/employees/import", { method: "POST", body: { rows } });
-    toast(`Imported: ${r.created} added, ${r.updated} updated${bad ? `. ${bad} Card No value(s) contained letters and were skipped` : ""}.`);
+    const badInc = badIncClient + (r.bad_increment_dates || 0);
+    toast(`Imported: ${r.created} added, ${r.updated} updated${bad ? `. ${bad} Card No value(s) contained letters and were skipped` : ""}${badInc ? `. ${badInc} Last Increment Date value(s) weren't valid dates (or were in the future) and were left out` : ""}.`);
     await loadEmployees(); await loadHotels();
   } catch (e) { toast(e.message || errorCopy(e, "Import employees")); } finally { $("employees-file").value = ""; }
 }
@@ -1457,6 +1462,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("download-employee-template").onclick = downloadEmployeeTemplate;
   $("employee-status-filter").onchange = renderEmployees;
   $("employee-search").oninput = renderEmployees;
+  $("new-emp-last-increment").max = todayLocal();
   $("toggle-payslips").onclick = togglePayslips;
   $("download-increments").onclick = exportIncrements;
   $("new-emp-salary").addEventListener("input", () => {
