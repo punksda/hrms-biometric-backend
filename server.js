@@ -285,6 +285,14 @@ async function initDb() {
       paid BOOLEAN DEFAULT true
     );
   `);
+  // accrual_type: 'annual' (full entitlement granted at financial-year start,
+  // or pro-rated if someone becomes eligible partway through the year) or
+  // 'monthly' (a fixed number of days credited for each completed month of
+  // service, e.g. Casual Leave). min_service_months: how many months of
+  // service must pass before ANY of this leave type is available at all —
+  // 0 means available immediately.
+  await pool.query(`ALTER TABLE leave_types ADD COLUMN IF NOT EXISTS accrual_type TEXT DEFAULT 'annual';`);
+  await pool.query(`ALTER TABLE leave_types ADD COLUMN IF NOT EXISTS min_service_months NUMERIC DEFAULT 0;`);
   // Opening balance per employee per leave type (including "Comp Off"),
   // valid from as_of onward. Uploaded once mid-year from the old spreadsheet.
   await pool.query(`
@@ -444,16 +452,71 @@ function walkEmployee(emp, data, denseStart, endDate) {
   return rows;
 }
 
+// Adds `months` calendar months to a 'YYYY-MM-DD' date, keeping the same
+// day-of-month where possible (e.g. 2026-04-15 + 6 -> 2026-10-15) — and
+// clamping to the last real day of the target month when the original day
+// doesn't exist there (e.g. 2026-01-31 + 1 -> 2026-02-28, not an invalid
+// "Feb 31").
+function addMonths(dateStr, months) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const total = (y * 12 + (m - 1)) + months;
+  const ny = Math.floor(total / 12), nm0 = total % 12; // nm0 is 0-based (0=Jan)
+  const lastDayOfTargetMonth = new Date(Date.UTC(ny, nm0 + 1, 0)).getUTCDate();
+  return `${ny}-${pad2(nm0 + 1)}-${pad2(Math.min(d, lastDayOfTargetMonth))}`;
+}
+// Whole calendar months from the START of fromDate's month through the
+// START of toDate's month, inclusive — e.g. 2026-04-15 to 2026-09-20 is 6
+// (Apr, May, Jun, Jul, Aug, Sep), even though both ends are mid-month. If
+// toDate is before fromDate, returns 0 (not yet started).
+function monthsBetweenInclusive(fromDate, toDate) {
+  if (toDate < fromDate) return 0;
+  const [fy, fm] = fromDate.split("-").map(Number), [ty, tm] = toDate.split("-").map(Number);
+  return (ty * 12 + tm) - (fy * 12 + fm) + 1;
+}
+// The entitlement an employee has EARNED for one leave type by asOfDate,
+// within one financial year (fyStart='YYYY-04-01' through fyEnd='YYYY-03-31'),
+// before any opening-balance override and before subtracting what's been used.
+//  - 'monthly' types (e.g. Casual Leave, 1/month): credited one completed
+//    month at a time, starting the month they joined (if that's within this
+//    financial year), capped at the full annual amount.
+//  - 'annual' types (e.g. Privilege Leave, Sick Leave): the full amount is
+//    available from financial-year start — UNLESS the employee's eligibility
+//    date (joining date + the leave type's waiting period) falls after that,
+//    in which case nothing is available until eligible, and the first year
+//    is pro-rated by the whole months remaining in the financial year from
+//    the eligibility date. From the following financial year on, they get
+//    the full amount like everyone else. A waiting period of 0 months means
+//    "eligible from the day they joined", so even a 0-month-wait type still
+//    pro-rates a new joiner's first partial year rather than over-granting it.
+function computeEntitlement(type, doj, fyStart, fyEnd, asOfDate) {
+  const annual = Number(type.annual_days) || 0;
+  const effectiveJoin = doj && doj > fyStart ? doj : fyStart;
+  if (type.accrual_type === "monthly") {
+    const months = monthsBetweenInclusive(effectiveJoin, asOfDate);
+    const perMonth = annual / 12;
+    return Math.min(Math.round(months * perMonth * 100) / 100, annual);
+  }
+  const waitMonths = Number(type.min_service_months) || 0;
+  const eligibleFrom = doj ? addMonths(doj, waitMonths) : fyStart;
+  if (asOfDate < eligibleFrom) return 0;
+  if (eligibleFrom <= fyStart) return annual; // already eligible before this financial year began
+  const remainingMonths = monthsBetweenInclusive(eligibleFrom, fyEnd);
+  return Math.round(annual * remainingMonths / 12 * 100) / 100;
+}
+
 // Leave balance for one leave type. With an uploaded opening balance dated on
 // or after the start of the leave year, that balance is the starting point and
-// only leaves taken on/after its date are deducted. Otherwise the policy's
-// annual entitlement is the starting point from the start of the leave year.
-function leaveBalanceFor(rows, type, opening, yearStart) {
+// only leaves taken on/after its date are deducted — this lets a manual
+// correction or a mid-year migrated balance override the computed accrual.
+// Otherwise the entitlement is computed fresh from the accrual rules above,
+// starting clean each financial year (nothing carries forward from the one
+// before — any unused days from last year simply don't count this year).
+function leaveBalanceFor(rows, type, opening, yearStart, doj, fyEnd, asOfDate) {
   const useOpening = !!opening && opening.asOf >= yearStart;
   const start = useOpening ? opening.asOf : yearStart;
-  const base = useOpening ? opening.balance : (Number(type.annual_days) || 0);
+  const base = useOpening ? opening.balance : computeEntitlement(type, doj, yearStart, fyEnd, asOfDate);
   const used = rows.filter(r => r.status === type.name && r.date >= start).length;
-  return { opening: base, used, balance: base - used, as_of: useOpening ? opening.asOf : null };
+  return { opening: base, used, balance: Math.round((base - used) * 100) / 100, as_of: useOpening ? opening.asOf : null };
 }
 function compLedgerFor(rows, opening) {
   const start = opening ? opening.asOf : null;
@@ -672,11 +735,15 @@ async function computePayroll(hotelId, month) {
 // selected month (or today if that month is still running).
 async function computeLeaves(hotelId, month) {
   const employees = await getScopeEmployees(hotelId, month);
-  const types = (await pool.query("SELECT name, code, annual_days, paid FROM leave_types ORDER BY name"))
-    .rows.map(t => ({ name: t.name, code: t.code, annual_days: Number(t.annual_days), paid: t.paid }));
+  const types = (await pool.query("SELECT name, code, annual_days, paid, accrual_type, min_service_months FROM leave_types ORDER BY name"))
+    .rows.map(t => ({ name: t.name, code: t.code, annual_days: Number(t.annual_days), paid: t.paid, accrual_type: t.accrual_type, min_service_months: Number(t.min_service_months) }));
   const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
   const y = Number(month.slice(0, 4)), m = Number(month.slice(5, 7));
   const yearStart = `${m >= startMonth ? y : y - 1}-${pad2(startMonth)}-01`;
+  // Financial year ends the day before next year's start month begins —
+  // for the standard April-start year that's March 31 of the following year.
+  const fyEndExclusive = addMonths(yearStart, 12);
+  const fyEnd = ymd(new Date(new Date(fyEndExclusive + "T00:00:00Z").getTime() - 86400000).toISOString());
   const monthEnd = `${month}-${pad2(daysInMonthOf(month))}`;
   const today = todayIst();
   const endDate = today < monthEnd ? today : monthEnd;
@@ -692,8 +759,9 @@ async function computeLeaves(hotelId, month) {
   const records = employees.map(emp => {
     const rows = walkEmployee(emp, ctx.forEmployee(emp), yearStart, endDate);
     const opens = openBy[emp.id] || {};
+    const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
     const balances = {};
-    types.forEach(t => { balances[t.name] = leaveBalanceFor(rows, t, opens[t.name] || null, yearStart); });
+    types.forEach(t => { balances[t.name] = leaveBalanceFor(rows, t, opens[t.name] || null, yearStart, doj, fyEnd, endDate); });
     return {
       employee_id: emp.id, employee_name: emp.name, hotel_id: emp.hotel_id,
       balances, comp_off: compLedgerFor(rows, opens["Comp Off"] || null)
@@ -1542,12 +1610,15 @@ app.get("/api/payroll", async (req, res) => {
 // ---------------------------------------------------------------------
 app.get("/api/leave-policy", async (req, res) => {
   try {
-    const types = await pool.query("SELECT name, code, annual_days, paid FROM leave_types ORDER BY name");
+    const types = await pool.query("SELECT name, code, annual_days, paid, accrual_type, min_service_months FROM leave_types ORDER BY name");
     const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
     res.json({
       status: "success",
       leave_year_start_month: startMonth,
-      records: types.rows.map(t => ({ name: t.name, code: t.code, annual_days: Number(t.annual_days), paid: t.paid }))
+      records: types.rows.map(t => ({
+        name: t.name, code: t.code, annual_days: Number(t.annual_days), paid: t.paid,
+        accrual_type: t.accrual_type || "annual", min_service_months: Number(t.min_service_months) || 0
+      }))
     });
   } catch (error) {
     console.error("GET /api/leave-policy failed:", error);
@@ -1588,13 +1659,25 @@ app.post("/api/leave-policy", async (req, res) => {
         const paid = !/^(n|no|false|0|unpaid)$/.test(paidRaw);
         const code = r.code && String(r.code).trim() ? String(r.code).trim().toUpperCase()
           : name.split(/\s+/).map(w => w[0]).join("").toUpperCase();
-        clean.push([name, code, days, paid]);
+        const accrualRaw = r.accrual_type ? String(r.accrual_type).trim().toLowerCase() : "annual";
+        if (!["annual", "monthly"].includes(accrualRaw)) {
+          return res.status(400).json({ status: "error", message: `accrual_type for "${name}" must be "annual" or "monthly".` });
+        }
+        const minServiceMonths = r.min_service_months === undefined || r.min_service_months === null || r.min_service_months === ""
+          ? 0 : Number(r.min_service_months);
+        if (isNaN(minServiceMonths) || minServiceMonths < 0) {
+          return res.status(400).json({ status: "error", message: `min_service_months for "${name}" must be a number, 0 or more.` });
+        }
+        clean.push([name, code, days, paid, accrualRaw, minServiceMonths]);
       }
       if (!clean.length) return res.status(400).json({ status: "error", message: "No valid leave types found in the upload." });
       await client.query("BEGIN");
       await client.query("DELETE FROM leave_types");
-      for (const [name, code, days, paid] of clean) {
-        await client.query("INSERT INTO leave_types (name, code, annual_days, paid) VALUES ($1,$2,$3,$4)", [name, code, days, paid]);
+      for (const [name, code, days, paid, accrualType, minServiceMonths] of clean) {
+        await client.query(
+          "INSERT INTO leave_types (name, code, annual_days, paid, accrual_type, min_service_months) VALUES ($1,$2,$3,$4,$5,$6)",
+          [name, code, days, paid, accrualType, minServiceMonths]
+        );
       }
       await client.query("COMMIT");
       saved = clean.length;
@@ -1868,7 +1951,8 @@ app.get("/api/self/me", requireEmployeeAuth, async (req, res) => {
   const emp = req.employee;
   const hotel = (await pool.query("SELECT name FROM hotels WHERE id = $1", [emp.hotel_id])).rows[0];
   res.json({ status: "success", employee: { id: emp.id, name: emp.name, role: emp.role, department: emp.department || "", hotel_id: emp.hotel_id,
-    hotel_name: hotel ? hotel.name : "", date_of_joining: emp.date_of_joining } });
+    hotel_name: hotel ? hotel.name : "", date_of_joining: emp.date_of_joining,
+    payslips_enabled: (await getSetting("payslips_enabled", "false")) === "true" } });
 });
 
 // Query param: month ("YYYY-MM"). Reuses the exact same engine the admin
@@ -1913,6 +1997,10 @@ function payslipReleaseDate(month) {
 // so showing a number early risks showing one that still changes.
 app.get("/api/self/payslip", requireEmployeeAuth, async (req, res) => {
   try {
+    if ((await getSetting("payslips_enabled", "false")) !== "true") {
+      return res.status(403).json({ status: "error", payslips_disabled: true,
+        message: "Payslips aren't available in the portal right now. Please contact HR if you need one." });
+    }
     const month = req.query.month || todayIst().slice(0, 7);
     const releaseDate = payslipReleaseDate(month);
     if (todayIst() < releaseDate) {
@@ -2010,6 +2098,35 @@ app.get("/api/leave-requests", async (req, res) => {
 
 // Body: { decision: "Approved" | "Rejected", note }. Approving writes an
 // attendance_overrides row for every date in the request's range.
+// How many days of `typeName` this one employee has available, as of the
+// day BEFORE `fromDate` (i.e. not counting the leave request itself) —
+// used to decide how much of a leave request a balance can actually cover.
+async function getAvailableBalance(employeeId, typeName, fromDate) {
+  const empRes = await pool.query(`SELECT ${EMPLOYEE_COLS} FROM employees WHERE id = $1`, [employeeId]);
+  if (!empRes.rows.length) return null;
+  const emp = empRes.rows[0];
+  const typeRes = await pool.query("SELECT name, annual_days, accrual_type, min_service_months FROM leave_types WHERE name = $1", [typeName]);
+  if (!typeRes.rows.length) return null;
+  const type = typeRes.rows[0];
+  const startMonth = Number(await getSetting("leave_year_start_month", "1")) || 1;
+  // Balance as of the day the request starts — not "the day before", which
+  // can roll into the PREVIOUS financial year entirely when a request starts
+  // right on the financial year's first day, wrongly inflating the result
+  // with a full year's entitlement from the year that's already ending.
+  const asOf = fromDate;
+  const y = Number(asOf.slice(0, 4)), m = Number(asOf.slice(5, 7));
+  const yearStart = `${m >= startMonth ? y : y - 1}-${pad2(startMonth)}-01`;
+  const fyEnd = ymd(new Date(new Date(addMonths(yearStart, 12) + "T00:00:00Z").getTime() - 86400000).toISOString());
+  const ctx = await loadAttendanceContext([emp]);
+  const rows = walkEmployee(emp, ctx.forEmployee(emp), yearStart, asOf < yearStart ? yearStart : asOf);
+  const balRes = await pool.query(
+    "SELECT opening_balance, to_char(as_of,'YYYY-MM-DD') AS as_of FROM leave_balances WHERE employee_id = $1 AND leave_type = $2", [employeeId, typeName]
+  );
+  const opening = balRes.rows.length ? { balance: Number(balRes.rows[0].opening_balance), asOf: balRes.rows[0].as_of } : null;
+  const doj = emp.date_of_joining ? ymd(emp.date_of_joining) : null;
+  return leaveBalanceFor(rows, type, opening, yearStart, doj, fyEnd, asOf).balance;
+}
+
 app.post("/api/leave-requests/:id/decide", async (req, res) => {
   try {
     const decision = req.body && req.body.decision;
@@ -2018,22 +2135,51 @@ app.post("/api/leave-requests/:id/decide", async (req, res) => {
     if (!existing.rows.length) return res.status(404).json({ status: "error", message: "Request not found." });
     const lr = existing.rows[0];
     if (lr.status !== "Pending") return res.status(409).json({ status: "error", message: `This request was already ${lr.status.toLowerCase()}.` });
+    let autoNote = "";
     if (decision === "Approved") {
       const dates = [];
       eachDate(ymd(lr.start_date), ymd(lr.end_date), d => dates.push(d));
-      for (const date of dates) {
+
+      // If the requested leave type can't cover every day, whatever's left
+      // becomes unpaid leave (LWP) rather than silently over-drawing the
+      // balance — the employee still gets marked present-or-absent
+      // correctly for payroll either way, just under the right category.
+      const available = await getAvailableBalance(lr.employee_id, lr.leave_type, ymd(lr.start_date));
+      let coveredDates = dates, overflowDates = [];
+      if (available !== null && available < dates.length) {
+        const coveredCount = Math.max(0, Math.floor(available));
+        coveredDates = dates.slice(0, coveredCount);
+        overflowDates = dates.slice(coveredCount);
+      }
+      for (const date of coveredDates) {
         await pool.query(
           `INSERT INTO attendance_overrides (employee_id, date, status) VALUES ($1,$2,$3)
            ON CONFLICT (employee_id, date) DO UPDATE SET status = EXCLUDED.status`,
           [lr.employee_id, date, lr.leave_type]
         );
       }
+      if (overflowDates.length) {
+        const lwpType = await pool.query(
+          "SELECT name FROM leave_types WHERE paid = false ORDER BY (code = 'LWP') DESC, name LIMIT 1"
+        );
+        const lwpName = lwpType.rows.length ? lwpType.rows[0].name : "LWP";
+        for (const date of overflowDates) {
+          await pool.query(
+            `INSERT INTO attendance_overrides (employee_id, date, status) VALUES ($1,$2,$3)
+             ON CONFLICT (employee_id, date) DO UPDATE SET status = EXCLUDED.status`,
+            [lr.employee_id, date, lwpName]
+          );
+        }
+        autoNote = `Insufficient ${lr.leave_type} balance (${available} day(s) available for ${dates.length} requested): `
+          + `${coveredDates.length} day(s) marked ${lr.leave_type}, ${overflowDates.length} day(s) converted to ${lwpName}.`;
+      }
     }
+    const noteParts = [req.body.note ? String(req.body.note).trim() : "", autoNote].filter(Boolean);
     const r = await pool.query(
       "UPDATE leave_requests SET status = $2, decided_at = now(), decision_note = $3 WHERE id = $1 RETURNING *",
-      [req.params.id, decision, req.body.note ? String(req.body.note).trim() : ""]
+      [req.params.id, decision, noteParts.join(" ")]
     );
-    res.json({ status: "success", request: r.rows[0] });
+    res.json({ status: "success", request: r.rows[0], auto_note: autoNote || null });
   } catch (error) {
     console.error("POST /api/leave-requests/:id/decide failed:", error);
     res.status(500).json({ status: "error", message: error.message });
@@ -2104,6 +2250,19 @@ app.post("/api/employees/:id/reset-password", async (req, res) => {
 
 // The one shared password every new employee (or anyone HR has reset)
 // logs in with the first time, before being forced to set their own.
+// Master switch for employee payslips in the self-service portal. OFF by
+// default: payslips stay hidden from every employee until an admin turns
+// this on from the Payroll tab (e.g. once a new payslip format is approved).
+// Payroll calculations in the admin dashboard are unaffected either way.
+app.get("/api/settings/payslips-enabled", async (req, res) => {
+  res.json({ status: "success", payslips_enabled: (await getSetting("payslips_enabled", "false")) === "true" });
+});
+app.post("/api/settings/payslips-enabled", async (req, res) => {
+  const on = !!(req.body && req.body.payslips_enabled === true);
+  await setSetting("payslips_enabled", on ? "true" : "false");
+  res.json({ status: "success", payslips_enabled: on });
+});
+
 app.get("/api/settings/default-password", async (req, res) => {
   res.json({ status: "success", default_employee_password: await getSetting("default_employee_password", "Welcome@123") });
 });

@@ -349,7 +349,7 @@
             </div>
           </div>
           <div class="table-scroll mt-4"><table class="w-full min-w-[520px] text-left text-sm">
-            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Leave type</th><th class="p-3">Code</th><th class="p-3">Days per year</th><th class="p-3">Paid?</th></tr></thead>
+            <thead class="bg-slate-50 text-xs uppercase text-slate-500"><tr><th class="p-3">Leave type</th><th class="p-3">Code</th><th class="p-3">Days per year</th><th class="p-3">How it's earned</th><th class="p-3">Paid?</th></tr></thead>
             <tbody id="policy-table"></tbody>
           </table></div>
         </section>
@@ -384,6 +384,13 @@
           <div class="flex flex-wrap items-start justify-between gap-3">
             <p class="max-w-3xl text-sm text-slate-600">Gross pay = Gross Salary ÷ days in the month × payable days. PF and ESI are calculated on Fixed Basic Salary, only for employees flagged applicable — PF rounds to the nearest rupee, ESI always rounds up. Professional Tax follows the current West Bengal slab. CTC = Gross Pay + Employer PF + Employer ESI. Arrear, other deductions and advance recovery are editable per employee per month.</p>
             <button id="download-payroll" class="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white">Download CSV</button>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div>
+              <p class="text-sm font-bold text-[#003126]">Employee payslips in the self-service portal: <span id="payslips-status">…</span></p>
+              <p class="text-xs text-slate-600">While off, employees don't see the Payslip tab at all. Payroll here is unaffected.</p>
+            </div>
+            <button id="toggle-payslips" class="rounded-lg border border-[#003126] bg-white px-3 py-2 text-sm font-bold text-[#003126]">…</button>
           </div>
           <div id="payroll-empty" class="mt-5 rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No payroll records loaded.</div>
           <div id="payroll-table-wrap" class="table-scroll mt-5 hidden"><table class="w-full min-w-[1900px] text-left text-sm">
@@ -1087,19 +1094,34 @@ async function loadLeavePolicy() {
 }
 function renderPolicy() {
   $("leave-year-start").innerHTML = MONTH_NAMES.map((m, i) => `<option value="${i + 1}" ${state.leaveYearStart === i + 1 ? "selected" : ""}>${m}</option>`).join("");
-  $("policy-table").innerHTML = state.leaveTypes.length ? state.leaveTypes.map(t => `<tr class="border-t"><td class="p-3 font-semibold">${esc(t.name)}</td><td class="p-3">${esc(t.code)}</td><td class="p-3">${fmtNum(t.annual_days)}</td><td class="p-3">${t.paid ? "Paid" : "Unpaid"}</td></tr>`).join("")
-    : `<tr><td colspan="4" class="p-6 text-center text-slate-500">No leave policy yet — download the template, fill it in and upload it.</td></tr>`;
+  $("policy-table").innerHTML = state.leaveTypes.length ? state.leaveTypes.map(t => {
+    const how = t.accrual_type === "monthly"
+      ? `${fmtNum(t.annual_days / 12)}/month`
+      : (t.min_service_months > 0 ? `Granted at year start (after ${t.min_service_months} mo. service)` : "Granted at year start");
+    return `<tr class="border-t"><td class="p-3 font-semibold">${esc(t.name)}</td><td class="p-3">${esc(t.code)}</td><td class="p-3">${fmtNum(t.annual_days)}</td><td class="p-3">${how}</td><td class="p-3">${t.paid ? "Paid" : "Unpaid"}</td></tr>`;
+  }).join("")
+    : `<tr><td colspan="5" class="p-6 text-center text-slate-500">No leave policy yet — download the template, fill it in and upload it.</td></tr>`;
 }
 function downloadPolicyTemplate() {
-  downloadCsv([{ leave_type: "Casual Leave", code: "CL", annual_days: 12, paid: "Yes" }, { leave_type: "Sick Leave", code: "SL", annual_days: 12, paid: "Yes" },
-    { leave_type: "Earned Leave", code: "EL", annual_days: 15, paid: "Yes" }, { leave_type: "Leave Without Pay", code: "LWP", annual_days: 0, paid: "No" }], "leave-policy-template.csv");
+  downloadCsv([
+    { leave_type: "Casual Leave", code: "CL", annual_days: 12, paid: "Yes", accrual_type: "monthly", min_service_months: 0 },
+    { leave_type: "Privilege Leave", code: "PL", annual_days: 6, paid: "Yes", accrual_type: "annual", min_service_months: 6 },
+    { leave_type: "Sick Leave", code: "SL", annual_days: 6, paid: "Yes", accrual_type: "annual", min_service_months: 0 },
+    { leave_type: "Leave Without Pay", code: "LWP", annual_days: 0, paid: "No", accrual_type: "annual", min_service_months: 0 }
+  ], "leave-policy-template.csv");
 }
 async function uploadPolicy(file) {
   try {
     const { fields, data } = await readCsvFile(file);
-    const c = { name: findCol(fields, ["leavetype", "type", "name", "leave"]), code: findCol(fields, ["code", "shortcode"]), days: findCol(fields, ["annualdays", "daysperyear", "days", "entitlement", "annual"]), paid: findCol(fields, ["paid", "ispaid"]) };
+    const c = { name: findCol(fields, ["leavetype", "type", "name", "leave"]), code: findCol(fields, ["code", "shortcode"]),
+      days: findCol(fields, ["annualdays", "daysperyear", "days", "entitlement", "annual"]), paid: findCol(fields, ["paid", "ispaid"]),
+      accrual: findCol(fields, ["accrualtype", "accrual", "howearned"]), waitMonths: findCol(fields, ["minservicemonths", "waitingperiod", "servicemonths"]) };
     if (!c.name) throw new Error("The policy needs a leave_type column. Use “Download Template” for the layout.");
-    const rows = data.filter(r => r[c.name]).map(r => ({ leave_type: r[c.name], code: c.code ? r[c.code] : "", annual_days: c.days ? (r[c.days] === "" ? 0 : r[c.days]) : 0, paid: c.paid ? r[c.paid] : "Yes" }));
+    const rows = data.filter(r => r[c.name]).map(r => ({
+      leave_type: r[c.name], code: c.code ? r[c.code] : "", annual_days: c.days ? (r[c.days] === "" ? 0 : r[c.days]) : 0, paid: c.paid ? r[c.paid] : "Yes",
+      accrual_type: c.accrual && r[c.accrual] ? r[c.accrual].toLowerCase() : "annual",
+      min_service_months: c.waitMonths && r[c.waitMonths] !== "" ? r[c.waitMonths] : 0
+    }));
     if (!rows.length) throw new Error("No leave types found in that file.");
     const r = await request("/api/leave-policy", { method: "POST", body: { rows } });
     toast(`Leave policy saved: ${r.saved} leave types.`); await loadLeavePolicy(); await loadLeaves();
@@ -1314,6 +1336,25 @@ async function reactivateEmployee() {
 /* ---------- navigation ---------- */
 function activeTab() { const el = document.querySelector(".tab-view.active"); return el ? el.id : ""; }
 /* ---------- employee self-service: default password, reset, approvals ---------- */
+function renderPayslipsSwitch() {
+  const on = state.payslipsEnabled;
+  $("payslips-status").textContent = on ? "ON" : "OFF";
+  $("payslips-status").className = on ? "text-emerald-700" : "text-red-700";
+  $("toggle-payslips").textContent = on ? "Turn payslips off" : "Turn payslips on";
+}
+async function loadPayslipsSwitch() {
+  try { const d = await request("/api/settings/payslips-enabled"); state.payslipsEnabled = !!d.payslips_enabled; renderPayslipsSwitch(); }
+  catch (e) { /* non-critical */ }
+}
+async function togglePayslips() {
+  const next = !state.payslipsEnabled;
+  const msg = next ? "Turn payslips ON? Every employee will immediately see the Payslip tab and can open released payslips."
+                   : "Turn payslips OFF? The Payslip tab will disappear for every employee.";
+  if (!confirm(msg)) return;
+  try { const d = await request("/api/settings/payslips-enabled", { method: "POST", body: { payslips_enabled: next } });
+    state.payslipsEnabled = !!d.payslips_enabled; renderPayslipsSwitch(); toast(`Employee payslips turned ${next ? "on" : "off"}.`); }
+  catch (e) { toast(errorCopy(e, "Change payslip setting")); }
+}
 async function loadDefaultPassword() {
   try { const d = await request("/api/settings/default-password"); $("default-password-input").value = d.default_employee_password; }
   catch (e) { /* non-critical — leave the field blank rather than interrupting the page */ }
@@ -1416,6 +1457,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("download-employee-template").onclick = downloadEmployeeTemplate;
   $("employee-status-filter").onchange = renderEmployees;
   $("employee-search").oninput = renderEmployees;
+  $("toggle-payslips").onclick = togglePayslips;
   $("download-increments").onclick = exportIncrements;
   $("new-emp-salary").addEventListener("input", () => {
     const original = $("new-emp-salary").dataset.original;
@@ -1484,7 +1526,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 // token) — pulled out of DOMContentLoaded so a first-login password reset
 // can trigger it too, without duplicating this list.
 async function bootDashboardData() {
-  await loadHotels(); await loadEmployees(); await loadLeavePolicy(); await loadDefaultPassword();
+  await loadHotels(); await loadEmployees(); await loadLeavePolicy(); await loadDefaultPassword(); await loadPayslipsSwitch();
   $("overview-status").textContent = state.backend ? "Backend status loaded." : "Backend unavailable.";
   renderKpis();
   updateApprovalsBadge();

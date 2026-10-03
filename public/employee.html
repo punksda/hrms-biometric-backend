@@ -306,6 +306,11 @@ function enterApp() {
   $("app-emp-name").textContent = `${state.employee.name}`;
   $("app-emp-role").textContent = [state.employee.role, state.employee.department].filter(Boolean).join(" · ");
   $("app-emp-hotel").textContent = `${state.employee.id} · ${state.employee.hotel_name || "—"}`;
+  // The Payslip tab only appears when HR has switched payslips on; the
+  // server also refuses payslip requests while it's off, so hiding the
+  // button is just tidiness, not the actual protection.
+  const payBtn = document.querySelector('[data-tab="payslip"]');
+  if (payBtn) payBtn.style.display = state.employee.payslips_enabled ? "" : "none";
   showScreen("screen-app");
   switchTab("attendance");
 }
